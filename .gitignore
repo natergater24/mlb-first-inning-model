@@ -1,0 +1,52 @@
+# Environment and secrets
+env.txt
+.env
+*.env
+
+# Large data files — too big for GitHub
+data/raw/
+data/processed/
+data/models/
+data/odds/
+data/archive/
+
+# Keep these small reference files
+!data/processed/.gitkeep
+!data/raw/.gitkeep
+!data/models/.gitkeep
+!data/odds/.gitkeep
+!data/archive/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+
+# Logs
+logs/
+*.log
+
+# Mac system files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V5
+.Trashes
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Temporary files
+*.tmp
+*.temp
+nohup.out

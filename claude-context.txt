@@ -1,0 +1,362 @@
+I am continuing development of an MLB YRFI/NRFI betting pipeline. Read this entire briefing before doing anything.
+
+Project location: ~/Desktop/Nathan/Claude/MLB_Pipeline
+
+=== MAJOR PIVOT (2026-09-09) ===
+This project was previously a "first at-bat reach base" prediction pipeline. On 2026-09-09 it was
+completely repurposed to focus exclusively on YRFI/NRFI betting:
+
+  YRFI = Yes Run First Inning  — a run is scored in the 1st inning by either team
+  NRFI = No Run First Inning   — no run is scored in the 1st inning
+
+Single question the whole project answers: will a run be scored in the first inning of this game?
+The old first-at-bat model, its three blended sub-models, and the old dashboard were scrapped
+(moved to data/archive/ and src/archive/, nothing deleted).
+
+Critical technical requirement: Use /Library/Frameworks/Python.framework/Versions/3.14/bin/python3
+for all python commands and /Library/Frameworks/Python.framework/Versions/3.14/bin/streamlit for all
+streamlit commands. Do not use the venv. Packages are installed in system Python only. Start
+Streamlit with --server.headless true.
+
+=== ARCHITECTURE ===
+
+Ground truth: first-inning runs come from the official MLB Stats API linescore
+(statsapi.mlb.com/api/v1/schedule?sportId=1&season=YYYY&gameType=R&hydrate=linescore,probablePitcher —
+one HTTP call per season). 27,408 games 2015-2026, overall YRFI rate ~50.5% (matches published
+league figure).
+
+Model: a single game-level RandomForestClassifier (n=600, depth=12, leaf=25, class_weight=balanced)
++ isotonic CalibratedClassifierCV, predicting P(YRFI) per game. Time split: train 2015-2022,
+validate 2023, test 2024; final production fit uses 2015-2024 + calibrates on 2025. Test AUC ~0.555
+(YRFI is a near-coinflip event; published NRFI models sit 0.55-0.62). Well calibrated (test ECE ~0.04).
+A logistic-regression SURROGATE is trained alongside it (test AUC ~0.58) purely to give an additive
+log-odds decomposition for the dashboard's ⚙️ weighting sliders — it never replaces the RF output.
+
+Feature groups (src/yrfi_features.py :: build_game_features; slider groups in FEATURE_GROUPS):
+  - home/away starting pitcher first-inning profile: career/season/L5 NRFI%, 1st-inn ERA, K rate,
+    BB rate, hard-hit% allowed, first-pitch-strike rate, avg velo, primary pitch code
+  - away/home projected top-5 batter aggregates: OBP vs today's pitcher (BvP), avg BvP sample,
+    L7 OBP, L30 OBP, season HR/PA, hard-hit%, power score
+  - park factors (run factor, HR factor, dome flag) from src/park_factors.py
+  - weather (temp, wind speed, wind-out component, humidity — dome games forced neutral)
+  - month, umpire zone adjustment
+
+KNOWN MODEL CAVEATS (in yrfi_model_meta.json):
+  - Pitcher NRFI profiles and top-5 batter aggregates are CURRENT static values, not point-in-time,
+    so career features carry mild look-ahead bias; test AUC is a small over-estimate.
+  - Historical top-5 batter aggregates use 2026 projected lineups (team-level approximation).
+  - umpire_zone_adj is a placeholder (0.0) for almost all games — game_meta has no real per-umpire
+    zone data yet.
+  - Isotonic calibration + limited feature spread makes today's probabilities cluster onto a handful
+    of distinct values.
+  - batter_rolling.parquet (statcast) is stale at 2026-06-01, so the top-5 hard-hit%/xBA/BB% detail
+    is old; the OBP/OPS/R/AB windows come from batter_game_logs.parquet (current).
+
+=== PIPELINE SCRIPTS (src/) ===
+
+Kept & updated:
+  01_fetch_statcast.py  — unchanged; still builds bvp_full_lifetime, batter_rolling,
+                          batter_pitch_type_profile, pitcher_splits. NOTE batter_rolling is only as
+                          fresh as the last full Statcast download (currently 2026-06-01 — stale;
+                          re-run 01 to refresh L7/L30 batter form).
+  02_fetch_mlb_api.py   — CLI: --probable-pitchers-only, --rosters-only, --todays-feeds-only,
+                          --build-lineup-history. lineup_position_summary / _history are
+                          2026-season only, rebuilt from cached game feeds (~15s).
+                          UPDATED 2026-09-09: build_lineup_position_stats() now ALSO writes
+                          data/processed/batter_game_logs.parquet (one row per batter per game).
+                          The daily flow still only caches TODAY's feeds — run src/backfill_feeds.py
+                          to fill gaps before --build-lineup-history, else those tables go stale.
+  03_fetch_weather.py   — REWRITTEN 2026-09-09. Was matching a team's abbreviation as a SUBSTRING
+                          of the full team name to pick a stadium — silently missed 14 parks
+                          (Rate Field/CWS, Yankee Stadium/NYY, Wrigley/CHC, Citi/NYM, Kauffman/KC,
+                          Petco/SD, Oracle/SF, Busch/STL, Tropicana/TB, Dodger/LAD, Nationals Park/
+                          WSH, Angel Stadium/LAA, Sutter Health Park/OAK, old "Florida Marlins") and
+                          MIS-assigned every Seattle Mariners home game to Arizona ("ARI" ⊂
+                          "mARIners" = Phoenix weather on Mariners games). Now: resolve stadium by
+                          MLB team id -> canonical abbr (TEAM_ID_TO_ABBR) -> coordinates from
+                          src/park_factors.py. Game universe = yrfi_outcomes.parquet (full 2015-2026)
+                          ∪ schedule.parquet (today/upcoming). Fetches per stadium-season in one
+                          ranged Open-Meteo call (~330 calls for full history vs ~25k per-game).
+                          CLI: `--today-only` (today + next ~2 weeks, always refreshed),
+                          `--rebuild` (every game). Plain run = fill gaps + refresh today-forward.
+                          game_weather.parquet now covers all 30 stadiums.
+  04_fetch_odds.py      — UPDATED. First-inning (YRFI/NRFI) odds:
+                          * PRIMARY source = SportsGameOdds (SGO_API_KEY). fetch_sgo_first_inning()
+                            reads odds keys points-all-1i-ou-over (YRFI) / -under (NRFI). SGO
+                            carries the 0.5-run first-inning O/U for DraftKings, FanDuel, BetMGM
+                            AND Caesars, plus a de-vigged `fairOdds` consensus used as
+                            yrfi/nrfi_market_avg_implied.
+                          * FALLBACK = The Odds API (MARKETS_FIRST_INNING, fetch_first_inning_odds).
+                            The Odds API only exposes totals_1st_1_innings for FanDuel + BetMGM —
+                            DraftKings and Caesars withhold that derivative market from that feed
+                            (this is why the DK/CZR columns were blank before 2026-09-09).
+                          * bet365 / Fanatics Sportsbook: NOT available for MLB on either
+                            SportsGameOdds (9 books) or The Odds API (48 books, all regions).
+                            To add them you'd need a third feed:
+                              - OddsJam API (~$99-799/mo; lists bet365 + Fanatics in some states —
+                                verify the first-inning market + those books are in the chosen tier)
+                              - OpticOdds (enterprise pricing, has both)
+                              - BetsAPI (~£15-70/mo, bet365-focused; no Fanatics, no clean 1st-inn)
+                            bet365 has no public API and is aggressively bot-protected (scraping not
+                            recommended — ToS + fragile). Once a feed exists, wiring one book in is
+                            ~1-2 hrs (add to FI_BOOK_KEYS/BOOK_META, parse odds + deeplink, 1 column).
+                          Output: data/odds/yrfi_odds_{date}.parquet — per-game odds for DK/FD/MGM/
+                          CZR, per-book implied%, best line/book, market avg implied, odds_source,
+                          AND per-selection betslip deeplinks: {yrfi,nrfi}_link_{DK,FD,MGM,CZR}
+                          + best_{yrfi,nrfi}_link. SGO returns a `deeplink` per bet (like Pikkit):
+                            Caesars  — sportsbook.caesars.com/us/nj/bet/betslip?selectionIds=<uuid>
+                                       — REAL per-selection uuid, works. ⚡ in the dashboard.
+                            BetMGM   — sports.nj.betmgm.com/en/sports?options=<a-b-c> — REAL,
+                                       last segment per side. ⚡ in the dashboard.
+                            FanDuel  — sportsbook.fanduel.com/addToBetslip?marketId=<per-game>&
+                                       selectionId=<GENERIC>. The selectionId is a TEMPLATE id
+                                       (7017905 Over / 7017906 Under for EVERY game); FanDuel
+                                       rejects it ("Selection not added / no longer available").
+                                       fetch_sgo_first_inning() detects this (a side's selection
+                                       token has <=2 distinct values across the slate) and NULLS
+                                       those deeplinks -> FanDuel becomes a lobby link (↗).
+                            DraftKings — SGO returns no deeplink at all -> lobby link (↗).
+                          So ⚡ instant-betslip works for Caesars & BetMGM only. DK + FD open the
+                          book's MLB lobby. Caesars/BetMGM links are NJ-scoped (US only).
+                          DK-instant-link options (not pursued): The Odds API "Links" add-on
+                          doesn't carry DK's first-inning market anyway; scraping DK's ?outcomes=
+                          scheme is brittle + ToS-risky; a commercial betslip-link feed
+                          (OddsJam/Pikkit-style) is ~$100-500+/mo.
+                          Writes an empty file (dashboard falls back to model-only) if neither
+                          source returns first-inning data.
+                          CLI: `python src/04_fetch_odds.py --yrfi-only`; the plain run also builds it.
+  05_build_features.py  — still present (legacy first-at-bat feature builder). NOT part of the YRFI
+                          flow. park_factors import can be added if ever reused.
+
+New (YRFI):
+  10_build_yrfi_dataset.py     — builds data/processed/yrfi_outcomes.parquet (one row per game
+                                 2015-2026: first-inn runs home/away, yrfi/nrfi bools, starters,
+                                 venue, and away_b1..b5 / home_b1..b5 first-inning batter ids from
+                                 whatever inning-1 Statcast is cached). ~1 min.
+  11_build_pitcher_nrfi.py     — builds pitcher_nrfi_profile.parquet (1 row/pitcher: career/season/
+                                 L5 NRFI%, home_starts/away_starts + home_nrfi_pct/away_nrfi_pct +
+                                 home_first_inn_era/away_first_inn_era, and pitch-level rate stats
+                                 from inning-1 Statcast) + pitcher_last5_starts.parquet (1 row/
+                                 pitcher/start, last 5, with is_home + inning_1_pitches + velo).
+  12_build_top_order_batter.py — builds projected_top5_by_team.parquet (30 teams -> 5 projected
+                                 lineup-spot batters + confidence%) and top5_batter_stats.parquet
+                                 (lineup-position splits, L7/L30 form, season line). Requires
+                                 lineup_position_summary.parquet (errors clearly if missing, telling
+                                 you to run 02 --build-lineup-history first).
+  13_train_yrfi_model.py       — trains the RF + the logistic surrogate. Saves
+                                 data/models/yrfi_model.pkl (dict: model, features, medians,
+                                 surrogate {coef, mean, std, groups, group_labels, group_influence}),
+                                 yrfi_feature_importance.csv, yrfi_model_meta.json (adds a
+                                 "weighting" block: surrogate_test_auc, group_labels, group_influence
+                                 = avg |log-odds| the model leans on each group).
+  14_build_todays_yrfi.py      — builds data/processed/todays_yrfi_predictions.parquet (one row per
+                                 game today: model_yrfi_prob / model_nrfi_prob, implied model odds,
+                                 pitcher NRFI %s, top-5 BvP OBP, weather, park, umpire; home/away
+                                 team_id + team_record (MLB standings, 1 call); odds_checked_at;
+                                 base_model_logit + contrib_<group> (surrogate log-odds per slider
+                                 group); joins yrfi_odds_{date}.parquet if present; computes
+                                 yrfi_edge_pct / nrfi_edge_pct / recommended_bet / recommended_bet_ev).
+                                 recommended_bet: "YRFI"/"NRFI" if edge > 4%; else model-only
+                                 "YRFI MODEL ONLY"/"NRFI MODEL ONLY" if model prob > 0.60; else
+                                 "NO EDGE".
+
+Support modules:
+  park_factors.py   — PARK_FACTORS dict (30 teams: run_factor, hr_factor, is_dome, stadium_name,
+                      lat, lon). 100 = league average. Domes/indoor-normal: ARI, HOU, MIA, MIL, SEA,
+                      TB, TEX, TOR. ALIASES handles AZ->ARI, ATH->OAK, CHW->CWS, etc.
+                      Helpers: get_park(), park_run_factor(), park_hr_factor(), is_dome().
+  yrfi_features.py  — build_game_features(), feature_columns(), load_support(). Shared by src/13 & 14.
+  fetch_inn1_statcast.py — standalone downloader: inning-1-ONLY pitch data (hfInn=1, no outs
+                      filter) for 2015-2026 -> data/raw/statcast_inn1_{yr}.csv. Resumable
+                      (skips seasons already on disk). Re-run periodically to refresh 2026.
+  backfill_feeds.py  — NEW. Downloads every completed game feed missing from data/raw/game_feeds/
+                      (the daily pipeline only fetches TODAY's, so after a gap the cache misses
+                      weeks and lineup_position_summary / batter_game_logs go stale). Walks
+                      yrfi_outcomes.parquet. `--all` / `--since YYYY-MM-DD` / (default = current
+                      season). Then re-run: 02 --build-lineup-history -> 12 -> 14.
+                      2026-09-09: backfilled 900 missing Jul-Sep feeds; game logs 25.7k -> 44.1k
+                      rows, lineup_position_summary current to 2026-09-08.
+
+Archived (src/archive/): 06_alert.py, 07_train_model.py, 08_pitcher_model.py, 09_batter_model.py
+
+=== KEY DATA FILES ===
+data/processed/
+  yrfi_outcomes.parquet             — ground truth, 27,408 games 2015-2026 (1st-inn batter slots 100%)
+  pitcher_nrfi_profile.parquet      — ~1,344 pitchers, 45 cols
+  pitcher_last5_starts.parquet      — ~5,400 rows (is_home, inning_1_runs_allowed, inning_1_pitches,
+                                      velo_on_day, result, era_on_day)
+  projected_top5_by_team.parquet    — 30 teams
+  top5_batter_stats.parquet         — 150 batters, ~80 cols (BvP not here — computed in src/14;
+                                      L7/L30/season OBP/OPS/R/AB from batter_game_logs)
+  batter_game_logs.parquet          — NEW: one row per batter per game (AB/R/H/HR/BB/K/RBI/TB/reach)
+                                      from the cached game-feed boxscores. Built by src/02
+                                      --build-lineup-history. Powers dashboard L7/L30/Season windows
+                                      (OBP/OPS/R/AB) + seas_r/seas_ops/seas_ab in src/12. Only as
+                                      complete as the cached game feeds (run backfill_feeds first).
+  todays_yrfi_predictions.parquet   — rebuilt every day; one row per game
+  lineup_position_summary.parquet   — KEPT (2026 season, ~650 players). Feeds src/12.
+  lineup_position_history.parquet   — KEPT
+  bvp_full_lifetime.parquet         — KEPT (career batter-vs-pitcher; no SLG column)
+  batter_rolling.parquet            — KEPT (7/14/30d statcast form; stale at 2026-06-01)
+  pitcher_splits.parquet, batter_pitch_type_profile.parquet — KEPT
+  schedule.parquet (2026 only), game_meta.parquet, game_weather.parquet (30 stadiums, 27,621 games),
+  active_rosters.parquet, probable_pitchers.parquet — KEPT
+data/raw/
+  statcast_{yr}.csv        — leadoff-only pitch data (legacy)
+  statcast_full_{yr}.csv   — innings 1-5, first-PA-per-batter (incomplete: ~40% of games)
+  statcast_inn1_{yr}.csv   — inning-1-only, ALL first-inning pitches. 2015-2026 all downloaded
+                             (2026 partial = season-to-date). src/fetch_inn1_statcast.py, resumable.
+  mlb_schedule_{yr}.json   — cached season schedules (list of games)
+  game_feeds/*.json        — ~4,600 cached game feeds (linescore + boxscore + plays). Jul-Sep 2026
+                             backfilled 2026-09-09 via src/backfill_feeds.py.
+data/odds/
+  yrfi_odds_{date}.parquet — today's first-inning market odds by book (DK/FD/MGM/CZR), implied%,
+                             best line/book, market avg implied (SGO fairOdds), odds_source, and
+                             {yrfi,nrfi}_link_{book} betslip deeplinks (CZR/MGM only — DK/FD null).
+  (legacy props_*, sgo_props_*, game_odds_* still present, unused by YRFI flow)
+data/models/
+  yrfi_model.pkl, yrfi_feature_importance.csv, yrfi_model_meta.json
+data/archive/ — old processed files, old models, old todays_matchups
+env.txt — ODDS_API_KEY, SGO_API_KEY (project uses env.txt not .env)
+
+=== DASHBOARD (app.py) ===
+Completely rewritten 2026-09-09. Streamlit on localhost:8501. Single page, two views:
+
+LANDING (game list):
+  - ⚙️ Model weighting expander at the very top: one slider (0-200%, default 100%) per feature group
+    — Pitcher NRFI track record, Pitcher stuff, Pitcher last-5, Lineup power/matchup, Lineup recent
+    form, Ballpark, Weather. Each shows a "current lean" bar = how much the model already leans on
+    that group. 100% reproduces the model exactly; the sliders scale each group's log-odds
+    contribution around the model's own prediction (does NOT need to sum to 100%). "Reset to model"
+    button (uses st.session_state.pop of the widget keys — you cannot assign a widget key after the
+    widget is drawn). When any slider != 100% every card, edge, EV and recommendation recomputes
+    live and shows "model X% → your Y%".
+    "Effective weighting right now" — a live stacked colour bar + legend UNDER the sliders showing
+    each group's share = (slider% × the model's lean) renormalised to 100%. Recomputes instantly
+    on every slider move.
+    Mechanism: a logistic-regression surrogate trained alongside the RF in src/13 gives per-feature
+    log-odds; src/14 sums them by group into contrib_<group> columns + base_model_logit;
+    app.apply_weights() does adj_logit = base + Σ (w_g-1)·contrib_g.
+  - Header: title, date/time, colour-coded "updated N min ago" (green <30m / yellow <120m / red older),
+    "Refresh slate" button (runs the 5-step daily sequence with a live status panel).
+  - Metric row: Games today · Strong NRFI edges (>4%) · Strong YRFI edges (>4%) · Confirmed starters.
+  - Filters: All / NRFI Edge / YRFI Edge / No Edge · sort (Edge% / Game Time / Home / Away) ·
+    confirmed-starters-only toggle.
+  - One card per game (3 columns):
+      LEFT   — the two teams stacked tight: team logo (mlbstatic.com/team-logos/{team_id}.svg) +
+               abbr + W-L record + probable pitcher + that pitcher's season/L5 NRFI%; then a
+               park · weather · confirmed-status line.
+      MIDDLE — MODEL block: BOTH model odds shown (NRFI and YRFI) with the better-value side in
+               bold + a ◄ marker (better value = side with the higher market edge, or the model
+               favourite when no odds).
+      RIGHT  — BOOK LINES: a 2×4 table (NRFI / YRFI rows × DK / FD / MGM / CZR). Every listed odds
+               cell is a link (new tab): ⚡ = per-selection add-to-betslip deeplink — CZR & MGM
+               ONLY; ↗ = the book's MLB lobby — DK (no deeplink) and FD (SGO's deeplink uses a
+               generic template selectionId that FanDuel rejects, so it's dropped). Plus a
+               "checked {Mon D, H:MM AM}" timestamp from odds_checked_at and a one-line note
+               spelling out which books support ⚡.
+    Below: recommended-bet badge (✅ BET NRFI / ✅ BET YRFI / 📈 MODEL / ⚪ NO EDGE) · edge% ·
+    EV/$100 · "best {Book} {odds}⚡/↗" · "View details →".
+    When ⚙️ custom weights are active the MIDDLE block header reads "⚙️ YOUR WEIGHTING" and each
+    row shows "(model X%)".
+  Detail view Section 1 also has a row of side-aware betslip buttons "⚡/↗ {Book} {SIDE} {odds}"
+  for the recommended/better-value side + a "⚡ Add {SIDE} to {Book} betslip" button under the
+  Best Bet box (only when that book's link is a real deeplink).
+  app.py helpers: _bet_url() resolves the deeplink-or-lobby URL + instant flag; _better_value_side();
+  apply_weights() re-derives every probability/odds/edge/EV/recommendation from the sliders.
+  - Sidebar: model test AUC / Brier / ECE / accuracy + caveats (incl. the ⚡ book / geo caveat).
+  - todays_yrfi_predictions.parquet also carries home_team_id / away_team_id, home_team_record /
+    away_team_record (MLB standings, 1 call in src/14), odds_checked_at, base_model_logit,
+    contrib_<group> (surrogate log-odds per slider group).
+
+DETAIL VIEW (per game, 7 sections):
+  1. Model Prediction Summary — NRFI/YRFI probabilities (+ an info banner with the model's own
+     numbers when custom weights are on), probability bar, model implied odds, per-book table
+     (NRFI/YRFI odds, implied%, edge%), side-aware betslip buttons, Best Bet callout.
+  2. Weather & Park Context — temp/wind/humidity or dome note; park run factor; HR factor with a
+     plain-English explanation ("100 = MLB average; >100 = more HRs from dimensions/altitude/air,
+     <100 = fewer") and a colour-coded verdict for this park ("well below / below / roughly league /
+     above / well above average"); umpire zone.
+  3. Away Pitcher Profile — NRFI stats table (Career / This Season / Last 5 / Home / Away — Home &
+     Away rows now show GS + YRFI% + 1st ERA), last-5-starts detail (Date / Opp / Home-Away /
+     1st Inn R / 1st Inn Pitches / Result / Velo), first-inning arsenal (usage% / whiff%).
+  4. Home Pitcher Profile — same structure.
+  5. Away Team projected top-5 vs home pitcher — 5 batter cards, each with:
+     Table 1 (PRIMARY) "vs {SP}" — batter-vs-this-pitcher BvP transposed (PA/AVG/OBP/K%/BB%/HR).
+       "🚫 No matchup data — batter has not faced this pitcher" at 0 PA; "⚠️ small sample" under 5 PA.
+     Table 2 "recent & season" — rows AB/R/OBP/OPS × columns L7/L30/Season (real boxscore windows
+       from batter_game_logs.parquet).
+     Then: season line (G/HR/RBI/slash), limited-sample warning, lineup-spot frequency text.
+  6. Home Team projected top-5 vs away pitcher — same structure. Ends with a callout for the
+     FUTURE per-pitch batted-ball model — explicitly SEPARATE from the trained model.
+  7. Historical YRFI Context — model prediction vs league / park / each pitcher / head-to-head base
+     rates, as horizontal bars.
+
+=== DAILY PIPELINE ===
+run_pipeline.py --today-only  (also the launch.sh sequence and the app Refresh button):
+  1. src/02_fetch_mlb_api.py --probable-pitchers-only
+  2. src/02_fetch_mlb_api.py --rosters-only
+  3. src/03_fetch_weather.py --today-only
+  4. src/04_fetch_odds.py            (fetches game odds + builds yrfi_odds_{date}.parquet)
+  5. src/14_build_todays_yrfi.py
+
+run_pipeline.py  (full rebuild):
+  1. src/10_build_yrfi_dataset.py
+  2. src/02_fetch_mlb_api.py --build-lineup-history
+  3. src/11_build_pitcher_nrfi.py
+  4. src/12_build_top_order_batter.py
+  5. src/13_train_yrfi_model.py
+  6-10. today's probable pitchers / rosters / weather (--rebuild) / odds / predictions
+  BEFORE a full rebuild, run src/backfill_feeds.py so lineup_position_summary + batter_game_logs
+  include recent games (the daily flow only caches today's feeds). src/fetch_inn1_statcast.py
+  refreshes 2026 inning-1 pitch data.
+
+launch.sh — clears stale daily files (todays_yrfi_predictions.parquet, todays_props.parquet,
+odds_{date}.json, yrfi_odds_{date}.parquet, mlb_schedule_2026.json), runs the daily sequence
+(probable pitchers, rosters, weather --today-only, first-inning odds, predictions), then
+(re)starts Streamlit headless on :8501 and opens Chrome.
+
+=== FUTURE PROJECT (noted, not started) — PER-PITCH BATTED-BALL MODEL ===
+A separate scoring layer, shown ALONGSIDE (never inside) the current YRFI model:
+grade each projected top-5 batter on batted-ball success against pitches SIMILAR to what
+today's starter throws —
+  - fastballs: bucketed by velocity band (e.g. <93 / 93-96 / 96+ mph)
+  - breaking / offspeed: bucketed by pitch type (SL/CU/CH/FS/...)
+Metric ideas: xwOBAcon, hard-hit%, barrel%, avg EV on contact, whiff% vs that bucket.
+Data: statcast_inn1_* (or a fuller pull) has pitch_type / release_speed / launch_speed /
+estimated_woba_using_speedangle per pitch. Needs: batter-vs-pitch-bucket aggregates, a
+today's-starter pitch-mix profile, and a matchup score per batter. This is a meaningfully
+bigger build (new tables + a second model surface + UI). The dashboard currently carries a
+placeholder callout in the home-team Top-of-Order section. MORE DETAIL TO COME.
+Keep it strictly separated from the trained YRFI RandomForest + logistic surrogate — the
+"YOUR WEIGHTING" sliders and every probability/edge/EV in the app come only from that model.
+
+=== OUTSTANDING / NEXT STEPS ===
+  - RECURRING: run src/backfill_feeds.py + src/02 --build-lineup-history weekly (or fold recent
+    completed feeds into the daily flow) so lineup_position_summary + batter_game_logs stay
+    current — the daily pipeline only caches today's feeds.
+  - RECURRING: re-run src/fetch_inn1_statcast.py to refresh statcast_inn1_2026.csv, then src/11.
+  - batter_rolling.parquet (statcast, src/01) stale at 2026-06-01 — only feeds the top-5 hard-hit%
+    / xBA / bb% detail now; refresh src/01 when convenient.
+  - schedule.parquet only holds 2026. src/03 also reads yrfi_outcomes.parquet so weather isn't
+    limited by it, but 02_fetch_mlb_api.py should refresh schedule.parquet in the daily flow.
+  - Consider point-in-time pitcher NRFI aggregates to remove the look-ahead bias in training.
+  - Optional: switch calibration to sigmoid if isotonic plateaus stay too coarse.
+  - FUTURE (own section above): per-pitch batted-ball model, shown alongside — not inside — the
+    current model.
+
+  [DONE 2026-09-09, this session] pivot to YRFI/NRFI · weather 30-stadium fix · game-card redesign
+  · direct sportsbook links · SGO first-inning odds (DK/FD/MGM/CZR + fairOdds) · CZR/MGM instant
+  betslip deeplinks (FD dropped — template id; DK none) · ⚙️ model-weighting sliders + live
+  effective-weighting bar · HR-factor explainer · Top-of-Order rebuild (vs-pitcher primary +
+  L7/L30/season OBP/OPS/R/AB) · statcast_inn1 2026 + game-feed backfill · pitcher home/away GS+ERA
+  splits.
+
+=== WORKING RULES ===
+1. Read the key files relevant to the task before writing code.
+2. Auto-approve file changes unless destructive/irreversible.
+3. Show progress + ETA after each step.
+4. caffeinate on all long-running commands. Full system Python path always.
+5. Fix errors before moving on — do not skip.
+6. After any change to data/model files, re-run src/14 and restart Streamlit to verify end to end.
+7. After each major task, update this file and append a dated entry to claude-prompts.txt.

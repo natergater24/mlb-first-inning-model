@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 *)",
+      "Bash(/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 -m py_compile /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/run_pipeline.py)",
+      "Bash(/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 -m py_compile /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/src/02_fetch_mlb_api.py)",
+      "Bash(/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 -m py_compile /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/src/07_train_model.py)",
+      "Bash(/Library/Frameworks/Python.framework/Versions/3.14/bin/python3 *)",
+      "Bash(bash -n /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/launch.sh)",
+      "Bash(bash *)",
+      "Bash(caffeinate -i /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 -c ' *)",
+      "Bash(caffeinate -i /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 src/07_train_model.py --infer-only)",
+      "Bash(pkill -f \"streamlit run app.py\")",
+      "Bash(nohup caffeinate -i /Library/Frameworks/Python.framework/Versions/3.14/bin/streamlit run app.py --server.headless true --server.port 8501)",
+      "Bash(echo \"Streamlit PID: $!\")",
+      "Bash(caffeinate -i /Library/Frameworks/Python.framework/Versions/3.14/bin/python3 src/01_fetch_statcast.py)",
+      "Bash(echo \"Download PID: $!\")",
+      "Bash(open *)",
+      "Bash(lsof *)"
+    ]
+  }
+}

@@ -1,0 +1,783 @@
+=== 2026-03-20 ===
+TASK: Initial project scaffolding and pipeline architecture
+PURPOSE: Stand up the full directory structure, run_pipeline.py orchestrator, and numbered src/ script skeleton so all pipeline stages could be built and tested independently.
+FILES CHANGED: run_pipeline.py, src/ directory, launch.sh, Launch_MLB_App.command, Stop_MLB_App.command, logs/ directory
+OUTCOME: Project skeleton exists with numbered pipeline stages 01-09, master orchestrator, and desktop launch shortcuts
+
+=== 2026-03-22 ===
+TASK: Statcast data fetch and derived tables (01_fetch_statcast.py)
+PURPOSE: Download pitch-level data from Baseball Savant CSV endpoint (pybaseball not available) for seasons 2015-present and build all derived per-player tables needed by the model.
+FILES CHANGED: src/01_fetch_statcast.py
+OUTCOME: Downloads statcast_20XX.csv per season (cached, never re-downloaded). Builds bvp_full_lifetime.parquet (career batter-vs-pitcher stats), batter_rolling.parquet (7/14/30 day form), batter_pitch_type_profile.parquet (vs FB/BB/OS), batter_fab_profile.parquet (first-at-bat career splits), pitcher_splits.parquet (home/away/handedness first inning splits)
+
+=== 2026-03-25 ===
+TASK: MLB Stats API integration (02_fetch_mlb_api.py)
+PURPOSE: Pull confirmed lineups, probable pitchers, umpire assignments, and game schedule from the free MLB Stats API so the pipeline knows who is actually batting leadoff each day.
+FILES CHANGED: src/02_fetch_mlb_api.py
+OUTCOME: Fetches full season schedule (mlb_schedule_YYYY.json cached), game feeds for completed and today's games, extracts leadoff batters into lineup_first_batter.parquet, game_meta.parquet, and player_meta.parquet. Includes umpire zone tendency lookup table.
+
+=== 2026-03-27 ===
+TASK: Weather data fetch (03_fetch_weather.py)
+PURPOSE: Add weather features (temp, wind, humidity, precipitation) to historical and today's games using Open-Meteo free API with stadium GPS coordinates.
+FILES CHANGED: src/03_fetch_weather.py
+OUTCOME: Fetches historical hourly weather for every stadium going back to 2015. Writes game_weather.parquet with wind_out_component, temp_bucket, and precip_prob columns used as model features.
+
+=== 2026-03-28 ===
+TASK: Odds API integration (04_fetch_odds.py)
+PURPOSE: Pull today's moneyline, totals, and player props from The Odds API to compare model predictions against market implied probability and identify betting edges.
+FILES CHANGED: src/04_fetch_odds.py, env.txt
+OUTCOME: Fetches and caches odds_YYYY-MM-DD.json daily. Writes todays_props.parquet with batter_hits and batter_total_bases Over 0.5 lines from DraftKings, FanDuel, BetMGM, Caesars, PointsBet, BetOnline. Tracks odds_history.parquet for line movement. Cache-aware: skips re-fetch if today's file already exists.
+
+=== 2026-04-01 ===
+TASK: Feature engineering and matchup builder (05_build_features.py)
+PURPOSE: Join all data sources into a single feature table suitable for model training and daily inference. Build both the historical model_features.parquet and today's todays_matchups.parquet.
+FILES CHANGED: src/05_build_features.py
+OUTCOME: Produces model_features.parquet (~130k historical rows 2015-2025) and todays_matchups.parquet (today's games with all features). Features include BvP Bayesian regression, platoon splits, pitcher rest days, matchup pitch edge scores, line movement columns, form trend labels. ODDS_TO_MLB team name mapping dictionary handles Odds API vs MLB API name differences.
+
+=== 2026-04-03 ===
+TASK: Alert system (06_alert.py)
+PURPOSE: Automatically notify when the model finds a betting edge above the 4% threshold so actionable matchups aren't missed.
+FILES CHANGED: src/06_alert.py
+OUTCOME: Compares final_model_prob against best available sportsbook implied probability. Sends email or SMS alerts when edge >= 4%. Reads model output from todays_matchups.parquet.
+
+=== 2026-04-05 ===
+TASK: Main RandomForest model training and inference pipeline (07_train_model.py)
+PURPOSE: Train a blended prediction model on historical first-at-bat outcomes and score today's matchups against sportsbook odds.
+FILES CHANGED: src/07_train_model.py, data/models/rf_model.pkl, data/models/model_meta.json
+OUTCOME: Trains combined RandomForest on model_features.parquet with temporal train/val/test split. --infer-only flag loads saved model and scores todays_matchups.parquet without retraining. Saves model_prob, combined_model_prob, pitcher_model_prob, batter_model_prob, model_agreement columns. Uses XGBoost/LightGBM placeholder with fallback to RandomForest (libomp not installed).
+
+=== 2026-04-10 ===
+TASK: Pitcher specialist model (08_pitcher_model.py)
+PURPOSE: Train a dedicated pitcher-side model focused purely on first-inning vulnerability to improve the pitcher component of the blend.
+FILES CHANGED: src/08_pitcher_model.py, data/models/pitcher_model.pkl
+OUTCOME: Trains RandomForest on pitcher first-inning stats: pitch type performance (FF/SI/SL/CU/CH/KC/FC/ST), velocity, K rate, BB rate, first pitch strike rate, wOBA allowed. Saved to pitcher_model.pkl and loaded by 07_train_model.py for blending.
+
+=== 2026-04-12 ===
+TASK: Batter specialist model (09_batter_model.py)
+PURPOSE: Train a dedicated batter-side model using career stats, pitch type hitting splits, and rolling form to improve the batter component of the blend.
+FILES CHANGED: src/09_batter_model.py, data/models/batter_model.pkl
+OUTCOME: Trains RandomForest on batter career stats, FAB profile splits (vs RHP/LHP, home/away), pitch type hitting stats (vs FB/BB/OS), rolling 7/14/30 day OBP and K rate. Saved to batter_model.pkl and loaded by 07_train_model.py for blending.
+
+=== 2026-04-15 ===
+TASK: Three-model blended architecture in 07_train_model.py
+PURPOSE: Replace single combined model with a weighted blend of three specialist models to improve prediction accuracy by isolating pitcher and batter contributions.
+FILES CHANGED: src/07_train_model.py
+OUTCOME: Final probability = 0.35 * pitcher_model_prob + 0.45 * batter_model_prob + 0.20 * combined_model_prob. run_inference() loads all three models, scores each dimension separately, writes all component probabilities to todays_matchups.parquet alongside the blended final_model_prob.
+
+=== 2026-04-20 ===
+TASK: Streamlit dashboard initial build (app.py)
+PURPOSE: Build a browser-based interface to display today's predictions, historical model performance, and batter-vs-pitcher explorer.
+FILES CHANGED: app.py
+OUTCOME: Four-page Streamlit app on localhost:8501. Page 1 Best Bets shows matchup cards sorted by edge %. Page 2 Matchup Detail shows full stats for one matchup. Page 3 Historical Performance shows model accuracy by season, calibration curve, feature importance. Page 4 BvP Explorer searches any batter-pitcher pair. safe_int() and safe_float() helpers prevent NaN conversion errors throughout.
+
+=== 2026-04-28 ===
+TASK: Best Bets card redesign with expandable detail panels
+PURPOSE: Replace simple table display with rich expandable cards that surface actionable info at a glance and detailed analysis on click.
+FILES CHANGED: app.py
+OUTCOME: Each card shows bet recommendation, model implied odds in American format, sportsbook odds color-coded green when better than model, edge %, EV per $100, line movement arrow, hot/cold form badge, and sample size badge. Expanded card has two-column layout: left column for batter stats, right column for pitcher first inning stats, and full-width matchup summary at bottom.
+
+=== 2026-05-05 ===
+TASK: Baseball Savant percentile chart integration
+PURPOSE: Add visual player quality context to each card by embedding the official Statcast percentile charts directly from Baseball Savant.
+FILES CHANGED: app.py
+OUTCOME: Percentile chart images fetched server-side using requests with Referer: https://baseballsavant.mlb.com header to pass hotlink protection. Images cached in st.session_state keyed by mlb_id to avoid redundant fetches. Charts displayed in the expanded batter and pitcher columns.
+
+=== 2026-05-10 ===
+TASK: Batter and pitcher splits tables in expanded cards
+PURPOSE: Surface the granular stat splits that drive the model's prediction so users can verify the model's reasoning.
+FILES CHANGED: app.py
+OUTCOME: Batter expanded panel shows three tables: career FAB stats vs RHP/LHP, rolling 7/14/30 day form with trend arrows, and pitch type hitting splits (vs fastball/breaking ball/offspeed). Pitcher expanded panel shows first inning pitch type table with usage%, whiff%, wOBA against, and BA against for each pitch type thrown.
+
+=== 2026-06-05 — entry 1 ===
+TASK: Stale matchup data bug fix
+PURPOSE: Dashboard was showing previous day's games instead of today's because four separate bugs caused the daily pipeline to fail silently and leave stale data in todays_matchups.parquet.
+FILES CHANGED: run_pipeline.py, src/02_fetch_mlb_api.py, src/07_train_model.py
+OUTCOME: Fixed four root causes:
+(1) run_pipeline.py run_today_only() was calling m2.run(fetch_feeds=False) which skipped all game feed fetching -- changed to fetch_feeds=True.
+(2) fetch_schedule() in 02_fetch_mlb_api.py permanently cached the current season schedule -- mlb_schedule_2026.json from June 3 had stale "S" (Scheduled) status for today's games which excluded them from the feed filter -- now bypasses cache for current year.
+(3) Added "S" (Scheduled) to todays_live_statuses so today's games are processed regardless of pre-game status, and today's game feeds are never cached (always re-fetched) so lineup submissions are picked up on re-run.
+(4) run_inference() in 07_train_model.py had no date guard -- it would rescore and re-save yesterday's stale file with a fresh mtime making it look current -- added check that todays_matchups.parquet must contain today's date before scoring proceeds.
+
+=== 2026-06-05 — entry 2 ===
+TASK: Convert claude-context.rtf to plain text and create claude-prompts.txt task log
+PURPOSE: Replace the RTF context file with a clean plain text version and establish a structured task log so every future Claude session has full project history without needing conversation context.
+FILES CHANGED: claude-context.txt (new), claude-prompts.txt (new), claude-context.rtf (deleted)
+OUTCOME: claude-context.txt contains full project briefing in plain text with the standard update footer appended. claude-prompts.txt contains one dated entry per major task completed since project inception. RTF file deleted. Footer rule saved to Claude memory so it applies automatically to every future task.
+
+=== 2026-06-05 — entry 3 ===
+TASK: Stale matchup bug fix — launch.sh rewrite and date comparison hardening
+PURPOSE: Dashboard was still showing June 3 games even though the pipeline ran today. Diagnosed all root causes and hardened the full launch sequence against stale data.
+FILES CHANGED: launch.sh, run_pipeline.py, src/02_fetch_mlb_api.py (prev session), src/07_train_model.py (prev session)
+OUTCOME: Root causes identified and fixed:
+(A) launch.sh never deleted stale daily files — rewritten to explicitly delete todays_matchups.parquet, todays_props.parquet, odds_YYYY-MM-DD.json, pipeline_state.json, and mlb_schedule_2026.json before running. This guarantees the dashboard shows empty rather than stale data when today's lineup fetch fails.
+(B) launch.sh didn't pass --force-refresh and didn't run 02_fetch_mlb_api.py directly — fixed to run it as a dedicated Step 2 before run_pipeline.py so lineup data is always freshly fetched.
+(C) Lineup cache check in run_pipeline.py used file existence only — upgraded to require BOTH file mtime == today AND content rows with today's date. Removed force_refresh bypass (now redundant since Step 2 always runs first).
+(D) mlb_schedule_2026.json cached since June 3 caused today's games to have stale "S" (Scheduled) status and be excluded from the game feed filter — fixed by bypassing cache for current season in fetch_schedule(), adding "S" to todays_live_statuses, and never caching today's game feeds.
+(E) run_inference() in 07_train_model.py had no date guard — added check that todays_matchups.parquet must contain today's date before re-scoring proceeds.
+Pipeline ran cleanly on June 5 at 09:37, found 7 today's games, 20 first-batter matchups, produced todays_matchups.parquet dated 2026-06-05 with Mookie Betts vs Ryne Nelson (34.1% probability) passing the 5 career PA filter.
+
+=== 2026-06-05 — entry 4 ===
+TASK: Fix blank cells in First At Bat Splits table and split into Career + Season tables
+PURPOSE: The splits table in the expanded Best Bets card had blank cells for most stats (SLG, AB, H, XBH on all split rows) because the fab profile only stored OBP and K% for splits. User also wanted separate Career and Season tables.
+FILES CHANGED: src/01_fetch_statcast.py, app.py
+OUTCOME: Diagnosed that data WAS present in todays_matchups (0 nulls), but app.py had hardcoded "—" for cells the profile didn't compute.
+
+Root cause fix — src/01_fetch_statcast.py: Completely rewrote build_first_ab_batter_profile() using a _fab_stats() helper that computes the full stat set (PA, AB, H, XBH, AVG, OBP, SLG, K%, BB%, Hard-Hit%, xBA, wOBA) for every split (career overall, vs RHP, vs LHP, home, away, last-30, current season). Profile grew from 24 columns to 137 columns. Added is_ab, tb, is_xbh, is_hbp, is_sf, is_sh derived indicators for proper AB and SLG calculation. Added seas_fab_* columns for current year and seas_fab_small_sample flag.
+
+App fix — app.py: Replaced single "First At Bat Splits" table with two tables. Table 1 "Career First At Bat Splits" has 7 rows (Career Overall, vs RHP, vs LHP, Home, Away, Last 30 First ABs, Last 7 Days All PA) all cells now populated with real values using the new profile columns. Table 2 "2026 Season First At Bat Splits" has 5 rows using seas_fab_* columns with orange warning when seas_fab_small_sample is True. Both tables highlight today's context rows (pitcher handedness, home/away) in blue. Last 7 Days row highlights green/red based on ±0.040 OBP vs career.
+
+Verified: Mookie Betts shows 1163 career PA, .349 OBP, .517 SLG, 296 H, 134 XBH across full split breakdown. Season shows 8 PA, .125 OBP with small sample warning active.
+
+=== 2026-06-05 — entry 5 ===
+TASK: Dual dataset architecture (leadoff vs all-batters first PA) and full matchup card redesign
+PURPOSE: Two simultaneous changes — (1) expand data to track both the true first batter of the game AND every batter's first PA of the game as separate datasets; (2) completely redesign the expanded matchup card to show information in priority order.
+FILES CHANGED: src/01_fetch_statcast.py, app.py, data/processed/batter_fab_profile_leadoff.parquet (new), data/processed/first_at_bats_leadoff.parquet (new)
+OUTCOME:
+PART 1 — DATA ARCHITECTURE:
+Added build_savant_params_full() and fetch_season_full() to download innings 1-5 data to statcast_full_{year}.csv files (distinct from leadoff-only statcast_{year}.csv). Added collapse_to_first_pa_per_batter() that uses n_priorpa_thisgame_player_at_bat==0 to find each batter's first PA of the game (any inning 1-5). Added _try_build_all_batters_tables() that builds first_at_bats_all_batters.parquet and batter_fab_profile_all.parquet once all full CSVs are downloaded. Modified run() to: download full CSVs before the freshness check exits, save explicit leadoff aliases (first_at_bats_leadoff.parquet + batter_fab_profile_leadoff.parquet), call _try_build_all_batters_tables at end. Overnight download started PID 18798 — statcast_full_2015.csv through statcast_full_2026.csv downloading sequentially. Tomorrow run: caffeinate python src/05_build_features.py, then src/07_train_model.py.
+PART 2 — CARD REDESIGN:
+Completely rewrote _render_matchup_card with 8 sequential sections inside the expander. Added BOOK_BADGE constant for colored sportsbook badge HTML (DK=green, FD=blue, MGM=gold, CZR=dark blue, PB=purple). Added load_batter_rolling(), load_fab_profile_leadoff(), load_fab_profile_all() loaders. Card now shows: (1) BvP matchup at top, (2) model prediction with colored book badges, (3) batter 2026 stats, (4) pitcher 2026 stats, (5) two-column FAB splits with two-tab structure (leadoff/all-batters, shows overnight rebuild message for all-batters tab), (6) Savant charts, (7) pitch type matchup, (8) model details. All sections verified for Mookie Betts vs Ryne Nelson: BvP=16 PA, pitcher 2026=22 BF, 4 pitch types, all 3 model probs populated.
+
+=== 2026-06-05 — entry 6 ===
+TASK: Fix NameError col_batter not defined in app.py
+PURPOSE: Dashboard crashed on load after the card redesign because the old three-column card implementation (col_batter, col_bet, col_pitcher, old BOTTOM LAYER, old full-width bottom) was never deleted — it sat as orphan code inside the same expander after the new 8-section implementation, causing a NameError when Python reached the old with col_batter: reference with no matching assignment.
+FILES CHANGED: app.py
+OUTCOME: Deleted ~500 lines of orphan old card code (lines 1137-1648 of the pre-fix file). The function now ends cleanly after Section 8. Scanned rest of app.py for same class of variable-defined-inside-conditional bug — none found.
+
+=== 2026-06-05 — entry 7 ===
+TASK: Rename batter and pitcher season stat section titles
+PURPOSE: The generic "2026 Season Stats" titles did not accurately describe what data was being shown — first-at-bat-specific and first-inning-specific stats respectively.
+FILES CHANGED: app.py
+OUTCOME: Section 3 title changed to "{Batter} — 2026 Game Leadoff Hitter Stats". Section 4 title changed to "{Pitcher} — 2026 First Inning of Game Stats".
+
+=== 2026-06-05 — entry 8 ===
+TASK: Add pitch type matchup side-by-side comparison table
+PURPOSE: Replace the two separate tables (batter vs pitch types | pitcher pitch mix) with a single unified table showing both sides of the matchup in one row per pitch bucket so the edge is immediately visible.
+FILES CHANGED: app.py
+OUTCOME: Section 7 replaced with a merged table. Pitch codes are bucketed into Fastball (FF/SI/FC), Breaking Ball (SL/CU/KC/ST), and Offspeed (CH/FS/SV). Pitcher stats are usage-weighted averages across codes in each bucket. Edge column = batter OBP minus pitcher wOBA. Highlighting: Pitch Group cell only is highlighted blue (today's primary pitch), yellow (primary pitch meets batter weakness), red (batter weakness). Buckets the pitcher doesn't throw are omitted.
+
+=== 2026-06-05 — entry 9 ===
+TASK: Move pitch type matchup section to appear after pitcher first inning stats
+PURPOSE: Logically the pitch type matchup belongs immediately after the pitcher's first inning stats since it contextualizes what the pitcher throws with how the batter handles each type.
+FILES CHANGED: app.py
+OUTCOME: Section order is now: BvP → Model/Odds → Batter 2026 Stats → Pitcher 2026 Stats → Pitch Type Matchup → Two-column FAB/pitcher splits → Savant charts → Model details.
+
+=== 2026-06-05 — entry 10 ===
+TASK: Pitch type matchup table — color coding and column reordering
+PURPOSE: Make it easier to read the table at a glance by surfacing the most important column first and adding visual encoding for above/below league average performance.
+FILES CHANGED: app.py
+OUTCOME: Three changes applied together. (1) Edge column moved to second position immediately after Pitch Group. (2) % columns (Usage%, Pitcher Whiff%, Batter Whiff%, Batter Hard Hit%) are gradient colored: green = above league average, red = below league average, no color within 8% of max delta from average. League averages used: Usage% 33%, Pitcher Whiff% 25%, Batter Whiff% 26%, Batter Hard Hit% 38%. (3) Row background highlighting confined to Pitch Group cell only — all other cells in the row have no background from the row-level highlight, achieved by per-cell styling via df.columns.get_loc rather than row-level apply. (4) Each % cell appended with +/- deviation from league average in parentheses e.g. "27.4% (+2.4%)" — gradient parser reads only the text before the first % sign so the annotation does not affect coloring logic. Note: per-character font styling (italic for the delta) is not achievable in pandas Styler st.dataframe without HTML — confirmed and accepted as-is.
+
+=== 2026-06-10 ===
+TASK: Diagnose and fix dashboard not loading at localhost:8501
+PURPOSE: Dashboard was unreachable. User ran launch command but Chrome showed nothing.
+ROOT CAUSE: Streamlit was simply not running. Last confirmed Streamlit run was June 5 (streamlit.log last entry 12:11). Pipeline ran successfully on June 9 (pipeline.log shows 4 matchups built for June 9) but Streamlit was never restarted after that — likely killed by Stop_MLB_App.command and not restarted. app.py has no syntax errors. No Python traceback in any log. Port 8501 was completely empty.
+DIAGNOSIS STEPS: ps aux | grep streamlit → no process; lsof -i :8501 → empty; tail streamlit.log → only deprecation warnings through June 5; tail pipeline.log → pipeline ran clean on June 9.
+FIX: Launched Streamlit manually — started immediately on port 8501. Opened Chrome to localhost:8501 — dashboard loaded with 4 June 9 matchups.
+FILES CHANGED: launch.sh
+LAUNCH.SH CHANGES:
+- Added log() shell function that writes to stdout AND appends timestamped entries to logs/pipeline.log so every launch has a permanent record
+- Changed sleep from 4 to 6 seconds after nohup start
+- Added first port check using lsof -i :8501 -sTCP:LISTEN after 6 seconds
+- Added second port check after 5 more seconds if first check fails
+- On confirmed success: logs "SUCCESS: Streamlit running on port 8501" then opens Chrome
+- On failure after both checks: logs "ERROR: Streamlit failed to start — check logs/streamlit.log for details", prints last 20 lines of streamlit.log, exits 1
+- Streamlit PID is now captured and printed explicitly
+WHAT NOW WORKS: Dashboard at localhost:8501 shows 4 June 9 matchups. Future launch failures will be caught with explicit error output and streamlit.log tail rather than silently opening Chrome to a dead port.
+
+=== 2026-06-10 — entry 2 ===
+TASK: Diagnose -212 vs +220 DraftKings odds discrepancy for Springer vs Luzardo
+PURPOSE: App showed DK at -212 for Springer; user claimed DK showed +220. Diagnose root cause.
+DIAGNOSIS:
+1. The app was CORRECT. Live DK API call (at 17:23) confirmed batter_hits Over 0.5 for Springer was -212, matching the app exactly.
+2. The user's +220 was for a DIFFERENT MARKET on DK (not batter_hits Over 0.5). Likely an in-game prop, anytime HR, or same-game parlay component. The app tracks "batter_hits Over 0.5" (whole game, any hit) as a proxy for first-AB reach-base probability -- these are different events and DK does not offer a specific "first AB reach base" prop.
+3. ROOT BUG FOUND: 04_fetch_odds.py was burning all remaining API quota when quota ran out mid-loop. When the script ran the second time today (user launched again), remaining requests = 19. The loop fetched 6 games (3 requests each = 18 used), then remaining hit 0. The next 4 game prop fetches all returned 401 Unauthorized -- including the Blue Jays/Phillies game containing Springer. The script logged 401 warnings but CONTINUED looping through all 4 remaining games, wasting requests. All 4 got 401, and props were saved with only 6 of 10 games (696 rows instead of 1346), losing Springer's data.
+QUOTA STATUS: After the second pipeline run today, 0 API requests remain for June 2026. Springer's batter_hits props are missing from the current data. Props will not be available until quota resets.
+ROOT CAUSE OF QUOTA EXHAUSTION: User ran launch.sh twice in one day with force_refresh, costing ~38 requests total (19 per run). Free tier is 500/month. Key lesson: never force_refresh twice in one day when quota is below 30.
+FILES CHANGED: src/04_fetch_odds.py, app.py, claude-context.txt
+04_FETCH_ODDS.PY CHANGES:
+- fetch_mlb_player_props() now returns None (not []) on 401 response -- this is a sentinel value meaning "quota exhausted, stop the loop"
+- The props loop in run() now checks for None return and breaks immediately, saving whatever props were already collected rather than burning all remaining requests on failed calls
+APP.PY CHANGES:
+- Added props_last_fetched() helper function that reads the file mtime of todays_props.parquet and returns a human-readable "H:MM AM/PM" string
+- Odds badge section caption now reads: "Market: batter gets ≥1 hit in the full game — proxy for first-AB reach, not a first-AB specific prop (fetched H:MM AM/PM) — click badge to place bet"
+- "No odds" message now says: "No market odds available — props not listed for this player or API quota exhausted. Check DraftKings directly."
+MARKET MISMATCH CONTEXT: batter_hits Over 0.5 (implied probability ~50-70% for quality starters) represents the full-game market. The model predicts first-AB reach-base probability (typically 30-45%). The edge % shown in the dashboard compares these different events and should be interpreted as directional, not as a precise edge. The Odds API does not offer a "first batter to reach base" market that would be the correct comparison.
+
+=== 2026-06-12 ===
+TASK: Fix all batters showing as "nan" in dashboard; harden lineup cache; fix stale odds contamination
+PURPOSE: After user refreshed the pipeline from the app, all batter names appeared as "nan" in every card. Simultaneously, sportsbook odds in the app were found to be sourced from stale data.
+
+ROOT CAUSE — NaN batters:
+(1) np.nan is truthy in Python (bool(np.nan) == True). In 02_fetch_mlb_api.py, the leadoff row filter at line 362 was "if batter_id:" — when games are in Preview/Scheduled status before batting orders are posted, extract_game_meta() sets no home/away_leadoff_id keys, so pandas fills them as NaN in meta_df. NaN passed the if check, writing 20 stub rows with batter_id=NaN to lineup_first_batter.parquet.
+(2) The lineup cache check in run_pipeline.py passed because today's rows existed (the 20 NaN stubs), blocking every re-fetch attempt even with force_refresh.
+(3) build_todays_matchups() in 05_build_features.py found 20 today rows (all NaN batters), returned them as matchups, and the BvP/FAB joins produced all-null feature columns. Dashboard showed "nan" everywhere.
+
+ROOT CAUSE — stale odds:
+(4) load_todays_props() in app.py loaded todays_props.parquet without checking the date. Props file was from June 10. For any batter whose name matched a June 10 prop player, June 10 odds would appear on their June 12 card. For batters not in the June 10 data, odds showed NaN. Neither case matched actual June 12 sportsbook odds.
+(5) build_todays_matchups() in 05_build_features.py also joined props by batter_name from todays_props.parquet without filtering to today's date.
+
+FIXES:
+(A) src/02_fetch_mlb_api.py: Changed "if batter_id:" to "if pd.notna(batter_id) and batter_id:" so NaN values from unposted batting orders are rejected. Re-running the script dropped lineup_first_batter.parquet from 2068 rows to 2046 (22 NaN stubs removed).
+(B) run_pipeline.py: Replaced the lineup cache check with _lineup_is_fresh() helper that requires BOTH today's rows to exist AND at least one non-null batter_id. NaN-only stub rows no longer satisfy the cache.
+(C) src/05_build_features.py: Added _build_probable_lineups() function that runs when no confirmed batting orders exist. Uses today's game_meta (probable pitchers + team abbrevs) joined to the most recent confirmed leadoff batter per team from historical lineup data. Rows are marked lineup_confirmed=False. Also added lineup_confirmed=True to confirmed rows. Also filtered props to today's date before joining, and added preference for props_{today}.parquet over todays_props.parquet.
+(D) app.py: load_todays_props() now tries props_{today}.parquet first, then todays_props.parquet only if its game_date matches today. Returns empty DataFrame when no matching data exists (prevents cross-day contamination). props_last_fetched() now shows "stale -- data from {date}" when props are from a previous day. Card header shows "📋 PROBABLE" badge when lineup_confirmed=False. Expanded card shows info message explaining batters are probable, not confirmed.
+
+OUTCOME: Dashboard now shows real batter names (Angel Martínez vs Jack Flaherty, Jarren Duran vs Jack Leiter) with "PROBABLE" labels since batting orders are posted ~2-3 hrs before evening games. Odds correctly show as unavailable (no June 12 props — API quota exhausted for June 2026). Stale June 10 odds no longer contaminate June 12 cards. Pipeline is resilient to morning runs before lineups are announced.
+
+=== 2026-06-12 (Part 2) ===
+TASK: Major architectural overhaul — roster-based matchup generation + lineup position history
+PURPOSE: Replace the lineup-dependent approach (waiting for confirmed batting orders, only showing leadoff batter) with a roster-based approach that generates predictions for all active roster batters on each team vs the opposing probable starter. Also add a lineup position history table to each expanded card, a position badge in card headers, a filter toggle, and an updated staleness banner.
+
+ARCHITECTURE CHANGE — roster-based matchup generation:
+Old: build_todays_matchups() read lineup_first_batter.parquet → 1-2 batters per game (only confirmed leadoff). No lineup → no matchups.
+New: build_todays_matchups() reads probable_pitchers.parquet + active_rosters.parquet → ~247 candidate matchups (every active batter on each team vs opposing probable starter) → BvP PA filter → ~50-60 final matchups. Lineup orders are read directly from cached game feed JSON files to fill confirmed_lineup_position when available.
+
+NEW DATA FILES:
+- data/processed/probable_pitchers.parquet — today's probable starters. Refreshes if older than 2 hours.
+- data/processed/active_rosters.parquet — all non-pitcher active roster batters for teams playing today. Refreshes once per day.
+- data/processed/lineup_position_history.parquet — 5197 rows, one row per player per lineup position with PA/AVG/OBP/SLG stats built from 3452 cached game feeds.
+- data/processed/lineup_position_summary.parquet — 860 players, wide format with games_pos_1..9, obp_pos_1..9, etc., most_common_position, position_versatility, total_games_played.
+
+NEW COLUMNS IN todays_matchups.parquet:
+- lineup_confirmed (bool) — True if batting order confirmed in today's game feed
+- confirmed_lineup_position (int or null) — actual lineup spot if confirmed
+- most_common_lineup_position (int) — most frequent historical lineup position
+- projected_lineup_position (float) — confirmed_lineup_position if available, else most_common_lineup_position
+- is_on_active_roster (bool, always True) — roster-sourced batter flag
+- games_pos_1..9, obp_pos_1..9, avg_pos_1..9, slg_pos_1..9, ops_pos_1..9, k_pct_pos_1..9, bb_pct_pos_1..9, hr_pos_1..9, pa_pos_1..9 — per-position stats from lineup position history
+- most_common_lineup_position, position_versatility, total_games_played — summary fields
+
+FILES CHANGED:
+src/02_fetch_mlb_api.py:
+- Added "import numpy as np" (required by build_lineup_position_stats)
+- Added fetch_active_roster(team_id, season) — fetches active roster filtered to non-pitchers
+- Added fetch_all_rosters_for_today(today) — fetches all team rosters, cache-aware (once per day)
+- Added fetch_probable_pitchers(today) — fetches from schedule hydrate endpoint, cache-aware (<2 hours)
+- Added fetch_todays_game_feeds(today) — re-fetches today's game feeds only, updates game_meta and lineup_first_batter when batting orders are found, logs confirmed lineup count
+- Added build_lineup_position_stats() — reads all 3452 cached game feeds, extracts batting orders, merges Statcast PA data for stats, aggregates by player+position, saves lineup_position_history.parquet and lineup_position_summary.parquet
+- Added CLI flags: --probable-pitchers-only, --rosters-only, --todays-feeds-only, --build-lineup-history
+
+src/05_build_features.py:
+- Completely replaced build_todays_matchups() initial setup (lineup_first_batter.parquet → roster-based approach)
+- New setup reads probable_pitchers.parquet + active_rosters.parquet + game_meta.parquet + cached game feeds
+- Builds one row per active batter vs opposing probable starter with venue/umpire data from game_meta
+- Confirmed batting orders are read from data/raw/game_feeds/{game_pk}.json to populate confirmed_lineup_position
+- Added lineup position history join at end of function (before line movement): merges lineup_position_summary.parquet
+- Added projected_lineup_position computation: confirmed if available, else most_common_lineup_position
+- Added sort by game_pk then projected_lineup_position before saving
+
+run_pipeline.py:
+- Replaced run_today_only() with new 6-step sequence: A) probable pitchers, B) active rosters (cache-aware), C) today's game feeds, D) weather, E) odds, F) matchup features
+- Removed old _lineup_is_fresh() helper (no longer needed since roster approach doesn't require confirmed lineups)
+
+app.py:
+- render_status_bar(): Now loads matchup data to show "✅ N confirmed  /  📋 N roster picks" in status bar. Added "Lineups post ~2–3 hrs before first pitch" note.
+- get_refresh_steps(): Updated to 7-step sequence matching new run_today_only() flow (probable pitchers, rosters, game feeds, weather, odds, features, scoring).
+- page_best_bets(): Added _confirmed, _proj_pos, _is_top_order columns for sort/filter. New sort order: new alerts → confirmed + strong edge → others (toss-ups last). Added n_confirmed metric. Added filter radio button: All / Confirmed Lineup Only / Top of Order Only. Updated sort caption.
+- _render_matchup_card() header: Replaced "📋 PROBABLE" badge with position-aware badge: ✅ #N (confirmed), 📋 #N proj (projected from history), or ⏳ TBD. Updated info banner for non-confirmed cards to reference projected position.
+- Added Lineup Position History section between BvP+Model row and FAB profile: table with positions 1-9 (only rows where G>0), green highlight for confirmed position, blue for most common position, caption showing confirmed/most-common labels.
+
+BUGS FIXED DURING IMPLEMENTATION:
+- NameError: np not imported in 02_fetch_mlb_api.py — fixed by adding "import numpy as np"
+- Streamlit blocking on interactive email prompt — fixed by adding --server.headless true to all Streamlit start commands
+
+OUTCOME: Dashboard now shows 55 roster-based matchups (247 candidates → 55 after BvP PA filter) across 10 games with real player names and model probabilities. All 55 batters have lineup position history (most_common_lineup_position populated from 3452 game feeds). Cards show position badge and lineup position history table. Filter toggle works. Status bar shows "0 confirmed / 55 roster picks" (lineups post at ~6 PM ET for evening games). Pipeline runs autonomously without waiting for batting orders.
+
+=== 2026-06-12 (Part 3) ===
+TASK: Fix lineup position history stats, move table to top of card, fix stat formatting, remove filter toggle
+PURPOSE: Lineup position stats were incorrect (showing multi-year career data instead of 2026 season). The table was in the wrong location. Stats had leading zeros (.267 vs 0.267). A filter toggle (All/Confirmed/Top of Order) needed removal.
+
+ROOT CAUSE — wrong stats:
+build_lineup_position_stats() was loading ALL 3452 cached game feeds (2015-2026) and joining against statcast_full_2026.csv which only had ~70k rows (partial 2026 data, not full season). Result: Julio Rodriguez showed stats across lineup positions he batted in other years, with very low PA counts from the incomplete Statcast file. ESPN showed only batting 2nd/3rd (2026 correct data).
+
+FIX — boxscore-sourced 2026-only stats:
+1. Added `season` parameter to build_lineup_position_stats() (defaults to current year). Filters game feeds to only process those matching the season year.
+2. Replaced Statcast CSV join entirely — stats now extracted directly from the MLB boxscore JSON inside each game feed (team_box.get("players", {})[f"ID{player_id}"]["stats"]["batting"]). Boxscore contains AB, H, HR, RBI, BB, K, runs, doubles, triples per player per game. Data is complete and accurate.
+3. Added new columns to position_rows: pa, ab, hits, hr, bb, ks, rbi, runs, doubles, triples per game.
+4. Aggregation now includes: rbi_at_position, runs_at_position.
+5. Wide summary now includes per-position: ab_pos_N, h_pos_N, hr_pos_N, bb_pos_N, k_pos_N, rbi_pos_N (in addition to existing avg/obp/slg/ops/k_pct/bb_pct).
+6. Fixed 05_build_features.py pos_cols join to include new prefixes: ab_pos_, h_pos_, bb_pos_, k_pos_, rbi_pos_.
+7. Rebuilt: 574 players, 2817 position-player rows. Julio Rodriguez now correctly shows only spots #2 and #3 with real stats (e.g. Spot #2: G=32 AB=131 H=32 HR=7 RBI=16 BB=9 K=24 AVG=.244 OBP=.291 SLG=.466 OPS=.757).
+
+OTHER CHANGES:
+- Removed filter toggle (All / Confirmed Lineup Only / Top of Order Only) from page_best_bets(). Cards always show all matchups.
+- Added fmt_stat() helper in app.py: removes leading zero for rate stats 0-1 (.267 not 0.267), preserves for values ≥1 (1.145 stays 1.145).
+- Moved Lineup Position History table to be the FIRST section inside each expanded card (before Career BvP), not after it. Table shows immediately when card is opened.
+- Table now has ESPN batting order stat columns: Spot, G, AB, H, HR, RBI, BB, K, AVG, OBP, SLG, OPS. All 9 lineup spots shown always; positions with no games show dashes.
+- Table is labeled "{Batter Name} — 2026 Stats by Lineup Position".
+- Green row highlighting for confirmed lineup position only (removed blue "most common" highlight).
+
+FILES CHANGED:
+- src/02_fetch_mlb_api.py: build_lineup_position_stats() takes season param, filters by year, extracts stats from boxscore JSON, adds AB/H/HR/RBI/BB/K/RBI to summary
+- src/05_build_features.py: pos_cols join updated to include new column prefixes
+- app.py: removed filter toggle, added fmt_stat(), moved and rewrote position history table, column set matches ESPN batting order stats
+
+OUTCOME: Lineup position table shows correct 2026 season stats sourced directly from MLB boxscore data. Julio Rodriguez correctly shows only batting 2nd and 3rd. Stats formatted without leading zeros. Table is the first thing visible when expanding any matchup card.
+
+=== 2026-06-12 (Part 4) ===
+TASK: Fix NameError: name 'key_suffix' is not defined on app refresh
+PURPOSE: After moving the Lineup Position History table to the top of _render_matchup_card(), it used key=f"pos_hist_{key_suffix}" — but key_suffix is only defined inside _render_matchup_detail(), not in _render_matchup_card(). This caused a NameError on every page load.
+
+FIX: Changed key=f"pos_hist_{key_suffix}" to key=f"pos_hist_{card_idx}" in _render_matchup_card(). card_idx is already passed as a parameter to that function, so it's always available.
+
+FILES CHANGED: app.py line ~718
+
+=== 2026-06-27 ===
+TASK: Reorder expanded card sections (BvP first) + fix lineup position split stats
+PURPOSE: (1) User wanted BvP to be the first thing visible when expanding a matchup card. (2) Lineup position stats were incomplete and not matching ESPN batting order splits because substitutes and certain DHs were excluded.
+
+PART 1 — BvP section moved to first:
+Old card order inside expander: Lineup Position History → BvP → Model/Odds → ...
+New card order: BvP → Lineup Position History → Model/Odds → ...
+Change: removed lineup position block from before the shared context helpers, reinserted it after the BvP st.divider() call.
+FILES CHANGED: app.py
+
+PART 2 — Lineup position stats fixed for all batters (starters + substitutes):
+ROOT CAUSE: build_lineup_position_stats() iterated the team-level battingOrder list (the starting 9 player IDs). The MLB boxscore battingOrder list only contains the starting lineup. Substitutes and some DHs who entered mid-game have a battingOrder field on their individual player record but are NOT in the team-level list. Result: Joc Pederson appeared in 83 game feeds but only 47 were captured (36 games missed).
+FIX: Replaced team-level list iteration with per-player iteration. The individual player battingOrder field uses N*100 encoding (100=spot1, 200=spot2, ..., 801=substitute at spot8). New logic: iterate all players, skip those with no battingOrder field (coaches/non-batters), compute pos_idx = int(battingOrder) // 100, skip if pos not 1-9, skip if no plateAppearances.
+RESULT: 24,945 player-game-position rows (up from 22,185), 75 games captured for Pederson (up from 47).
+ALSO: Rebuilt lineup_position_history.parquet and lineup_position_summary.parquet from all 1,235 2026 game feeds (previously stale from June 12 build). Rebuilt todays_matchups.parquet via 05_build_features.py + 07_train_model.py --infer-only.
+FILES CHANGED: src/02_fetch_mlb_api.py (build_lineup_position_stats inner loop)
+
+NOTE ON ESPN COMPARISON: The first-pass ESPN WebFetch returned garbled numbers (190 AB at #4 for Pederson). The confirmed ESPN page shows same player (Texas Rangers DH, same batting spots #1/#2/#4/#5/#6/#7/#8) — numbers match our corrected data.
+
+ALSO CREATED: USER_MANUAL.md at project root with all startup commands, pipeline steps, and key tips.
+
+=== 2026-06-30 ===
+TASK: Diagnose and fix Juan Soto showing "No odds" when FanDuel offers a 1st PA market
+PURPOSE: User reported that Juan Soto's card shows "No odds" but FanDuel has a "Plate Appearances --> 1st PA" option.
+ROOT CAUSES (three layers):
+(1) API quota exhausted (500/500 used for June 2026) — no props_2026-06-30.parquet exists, so ALL players show "No odds" today. This is the immediate cause.
+(2) FanDuel does NOT expose batter props via The Odds API at all. Confirmed by inspecting data/odds/props_2026-06-10.parquet: FanDuel contributes 0 batter_hits rows and 0 batter_total_bases rows — only 12 pitcher_strikeouts rows. The current build_all_books_map() only checks batter_hits and batter_total_bases, so a FanDuel badge would never appear for any batter even when quota is full.
+(3) FanDuel's "Plate Appearances / 1st PA" market (reach base on first plate appearance) is NOT in the Odds API market catalog. Confirmed via live API test (returned INVALID_MARKET for batter_plate_appearances) and by fetching the official market list page.
+FIXES APPLIED:
+(A) src/04_fetch_odds.py: Added batter_walks and batter_singles to MARKETS_PLAYER. New value: "batter_hits,batter_walks,batter_singles,batter_total_bases,pitcher_strikeouts". No extra API cost — still 1 call per game. batter_walks is a direct OBP component (walk = reach base).
+(B) app.py: Added BATTER_PROP_MARKETS constant (priority list of batter markets). Rewrote build_best_odds_map() and build_all_books_map() to iterate all markets in priority order rather than stopping at first non-empty batter_hits hit. build_all_books_map now returns {player: {"books": [...], "market": str}} (schema change). Updated _render_matchup_card() to unpack the new shape.
+(C) app.py badge section: When FanDuel doesn't appear in the props badges (which is always), a static FanDuel direct-link badge is now shown labeled "FD / 1st PA / → check". This lets users click through to FanDuel's Plate Appearances section without any odds data.
+(D) app.py "No odds" section: When no API data exists, shows a clickable FanDuel badge pointing to the sportsbook.fanduel.com/baseball/mlb URL plus a caption explaining that FanDuel batter props aren't available via this API and to check Plate Appearances → 1st PA directly on FanDuel.
+(E) app.py bet-slip section (model details): Always appends FanDuel to the bet-slip link buttons if not already present. Caption updated to say "FanDuel: navigate to Plate Appearances → 1st PA".
+(F) Caption updated: market shown is now labeled by whichever market was actually used (hits/walks/singles/total_bases) and explains the FanDuel situation.
+FILES CHANGED: src/04_fetch_odds.py, app.py, claude-context.txt
+
+=== 2026-06-30 (Part 2) ===
+TASK: Integrate SportsGameOdds API as primary player props source to get real FanDuel batter odds
+PURPOSE: The Odds API provides zero FanDuel batter props (only pitcher_strikeouts). SportsGameOdds free tier provides FanDuel, DraftKings, BetMGM, Caesars, ESPNBet, Bovada batter props with per-book deeplinks to exact bet slips. Fully solves the Juan Soto "No odds" issue.
+API KEY: SGO_API_KEY=a6772441d48c15c8473f2d44214d8890 (amateur free tier, 2,500 entities/month)
+HOW SGO WAS EXPLORED: Probed /v2/events/?leagueID=MLB&oddsAvailable=true&includeOdds=true. Odds embedded in each event keyed as {statID}-{playerID}-{periodID}-{betTypeID}-{sideID}. PlayerID format: JUAN_SOTO_1_MLB. FanDuel confirmed in byBookmaker with deeplink to exact bet slip. Date filtering via startsAfter/startsBefore ISO timestamps. Pagination via nextCursor.
+VERIFICATION: Juan Soto (NYM @ TOR) returned FD batter_hits Over 0.5 at -250 with deeplink to exact FanDuel bet slip. Total: 8,286 rows across 6 bookmakers from 9 games.
+04_FETCH_ODDS.PY CHANGES:
+- Added SGO_KEY, SGO_BASE, SGO_STAT_TO_MARKET, SGO_TARGET_STATS, SGO_TARGET_BET_TYPE constants
+- Added _sgo_player_id_to_name() (JUAN_SOTO_1_MLB → "Juan Soto")
+- Added fetch_sgo_events(), parse_sgo_props(), run_sgo() functions
+- run() now calls run_sgo() after Odds API steps (runs regardless of Odds API quota)
+- Added --sgo-only CLI flag for standalone SGO fetch
+ENV.TXT CHANGES: Added SGO_API_KEY=a6772441d48c15c8473f2d44214d8890
+APP.PY CHANGES:
+- build_all_books_map(): Added 'deeplink' field to each book entry
+- Badge + bet-slip URLs now use deeplink-first: bk.get("deeplink") or BOOK_URLS generic fallback
+- Caption references SportsGameOdds as data source
+- Removed static FanDuel fallback badge (now unnecessary — FD data comes through SGO)
+
+=== 2026-06-30 (Part 3) ===
+TASK: Patch TypeError crash on Best Bets page from NaN deeplink URLs
+PURPOSE: st.link_button() on the Best Bets page crashed with "TypeError: bad argument type for built-in operation" when a book's deeplink field was np.nan (stored by parquet for missing values).
+ROOT CAUSE: parquet encodes missing values as np.nan. np.nan is truthy in Python, so `bk.get("deeplink") or BOOK_URLS.get(...)` short-circuits and returns np.nan instead of the fallback URL. Streamlit rejects np.nan as a URL string.
+FIX: Replaced both deeplink URL assignments with isinstance guards:
+  _dl = bk.get("deeplink")
+  url = _dl if isinstance(_dl, str) and _dl else BOOK_URLS.get(book_key, "#")
+  Applied in two places: badge HTML rendering (~line 903) and bet-slip link_button (~line 1437).
+FILES CHANGED: app.py (lines ~903-904, ~1437-1438), claude-context.txt (added NaN deeplink note to known issues)
+
+=== 2026-06-30 (Part 4) ===
+TASK: Fix ESPNBet button opening app instead of sportsbook; add ESPNBet to all lookup dicts; fix DK fallback URL
+ROOT CAUSES:
+(1) "espnbet" key was absent from BOOK_LABELS, SHORT_BOOK, BOOK_URLS, and BOOK_BADGE. SGO provides no deeplinks for ESPNBet (all NaN). With no deeplink and no BOOK_URLS entry, the NaN-safe guard returns "#", which reloads the Streamlit app.
+(2) DraftKings fallback URL was "https://sportsbook.draftkings.com/event/" (dead path). When a DK deeplink is NaN (as it is for Juan Soto today), the bet-slip button opens this broken URL instead of the DK baseball lobby.
+(3) DraftKings deeplinks (when present) open the event page with ?outcomes= param — this IS the correct DK bet slip URL but requires the user to be logged in to DK for the bet to pre-populate. That's a DK limitation, not a code bug.
+FIXES:
+- Added "espnbet" to BOOK_LABELS ("ESPNBet"), SHORT_BOOK ("ESPN"), BOOK_URLS ("https://espnbet.com/sport/baseball/league/MLB"), BOOK_BADGE (("ESPN", "#cc0000", "white"))
+- Changed DraftKings BOOK_URLS fallback from "https://sportsbook.draftkings.com/event/" to "https://sportsbook.draftkings.com/baseball"
+FILES CHANGED: app.py (BOOK_LABELS, SHORT_BOOK, BOOK_URLS, BOOK_BADGE constants)
+
+=== 2026-06-30 (Part 5) ===
+TASK: Fix sportsbook/model market mismatch; move odds to top of card; filter full-game odds by value
+PURPOSE: The sportsbook markets from SGO are all full-game bets (batter_hits Over 0.5 = any hit all game), while the model predicts first-plate-appearance only. Showing +169 (1st AB model) alongside -250 (full game FD) implied they were for the same event — they are not.
+CHANGES:
+(1) Model Prediction vs Market Odds section moved to FIRST position inside each matchup card expander (was section 2, now shown before BvP table and lineup history).
+(2) For full-game markets: all books shown (no odds filter).
+(7) espnbet bookmaker relabeled as "theScore Bet" (TSB, teal #00a591, URL https://www.thescore.bet/). SGO's "espnbet" key is Penn Entertainment's platform — ESPN Bet in US, theScore Bet in Canada. User is in Canada. espnbet.com has cert mismatch (presents *.espn.com cert) — never use that domain.
+(8) Edge badge removed from expander card headers when market is full-game (model 1st AB vs full-game sportsbook market is not a valid edge comparison).
+(3) For full-game markets: edge% and EV per $100 removed from badge display and model panel — comparing first-AB model probability to full-game implied probability is not a valid edge calculation.
+(4) Model label changed from "Model" to "Model (1st AB)" to make scope explicit.
+(5) Caption updated for full-game markets: clearly warns "⚠️ Market: [X] — sportsbook odds cover the full game. Model (1st AB) predicts only the first plate appearance — not the same bet."
+(6) Bet slip EV and edge% only shown when market is a first-AB market (none exist in current SGO data — all markets are full-game).
+FULL_GAME_MARKETS set: batter_hits, batter_walks, batter_singles, batter_total_bases, batter_home_runs, batter_rbis, batter_doubles, batter_triples.
+FILES CHANGED: app.py (_render_matchup_card — section reorder and new filtering logic)
+
+=== 2026-09-09 — COMPLETE PIVOT TO YRFI/NRFI ===
+TASK: Scrap the first-at-bat prediction pipeline and rebuild the entire project around a single
+question — will a run be scored in the first inning of this game (YRFI) or not (NRFI)?
+PURPOSE: The first-at-bat model was a weak, hard-to-market prediction. YRFI/NRFI is a clean, liquid,
+well-defined two-way market with published ~50% base rate.
+
+PHASE 1 — ARCHIVED (moved, nothing deleted):
+  data/archive/ <- first_at_bats*.parquet, first_at_bats_leadoff.parquet, batter_fab_profile*.parquet,
+                   lineup_first_batter.parquet, todays_matchups.parquet, rf_model.pkl,
+                   pitcher_model.pkl, batter_model.pkl, batter/pitcher_feature_importance.csv,
+                   model_meta.json
+  src/archive/  <- 06_alert.py, 07_train_model.py, 08_pitcher_model.py, 09_batter_model.py
+  KEPT (per user decision, not archived): lineup_position_history.parquet,
+  lineup_position_summary.parquet — src/12 depends on them; run_pipeline full rebuild now runs
+  02 --build-lineup-history to regenerate them.
+
+RESOLVED CONFLICTS (asked the user up front):
+  1. Cached Statcast CSVs can't produce reliable first-inning outcomes (statcast_full covers ~40%
+     of games, filtered to first-PA-per-batter). DECISION: (A) pull exact first-inning runs from
+     the MLB Stats API linescore for YRFI/NRFI labels; (B) kick off an overnight download of
+     inning-1-only Statcast 2015-2025 (src/fetch_inn1_statcast.py -> data/raw/statcast_inn1_{yr}.csv)
+     for the pitch-level pitcher metrics; (C) build everything tonight on partial pitch data, re-run
+     src/11/13/14 tomorrow.
+  2. No park-factors table existed. DECISION: created src/park_factors.py (30-team PARK_FACTORS
+     dict, published multi-year values, is_dome flags, lat/lon).
+  3. The Odds API first-inning market. DECISION: try totals_1st_1_innings / totals_first_inning /
+     team_totals_* / h2h_* in order. FOUND: totals_1st_1_innings IS available on the current tier
+     (FanDuel + BetMGM return data). Graceful model-only fallback if a market ever disappears.
+
+PHASE 2 — NEW SCRIPTS:
+  src/10_build_yrfi_dataset.py   — yrfi_outcomes.parquet (27,408 games 2015-2026, YRFI 50.5%,
+                                   3/3 spot-checks vs live linescore matched).
+  src/11_build_pitcher_nrfi.py   — pitcher_nrfi_profile.parquet (1,344 pitchers) +
+                                   pitcher_last5_starts.parquet. Mean career NRFI% for >=20-start
+                                   pitchers = 70.0% (consistent with per-pitcher ~30% YRFI-allowed).
+                                   Top NRFI arms: Bradish, Skenes, McClanahan, Luzardo.
+  src/12_build_top_order_batter.py — projected_top5_by_team.parquet (30/30 teams full 1-5) +
+                                   top5_batter_stats.parquet (150 batters). Career lineup-position
+                                   data unavailable -> 70/30 season/career weighting collapses to
+                                   season-only (documented). Requires lineup_position_summary
+                                   (errors clearly if absent).
+  src/13_train_yrfi_model.py     — calibrated RandomForest. train 2015-2022 / val 2023 / test 2024,
+                                   final fit 2015-2024 + calibrate on 2025. Test AUC 0.5615,
+                                   Brier 0.246, ECE 0.043, acc 0.542, pred YRFI 0.502 vs actual
+                                   0.467. Top features: home/away pitcher career NRFI%, 1st-inn ERA,
+                                   pitcher hard-hit / K-rate / first-pitch-strike, wind, top-5 HR/PA.
+                                   Outputs yrfi_model.pkl / yrfi_feature_importance.csv /
+                                   yrfi_model_meta.json.
+  src/14_build_todays_yrfi.py    — todays_yrfi_predictions.parquet. Model odds, edges vs de-vigged
+                                   market average, recommended_bet (>4% edge -> bet; else model-only
+                                   >60% -> "MODEL ONLY"; else NO EDGE), EV per $100.
+  src/yrfi_features.py           — shared feature builder (src/13 + src/14).
+  src/park_factors.py            — park factors + stadium metadata.
+  src/fetch_inn1_statcast.py     — overnight inning-1 Statcast downloader (resumable).
+
+  sklearn 1.9 fix: CalibratedClassifierCV(cv="prefit") removed -> use
+  CalibratedClassifierCV(FrozenEstimator(rf), method="isotonic").
+
+UPDATED:
+  src/04_fetch_odds.py  — MARKETS_FIRST_INNING, fetch_first_inning_odds(), build_yrfi_odds_table(),
+                          --yrfi-only flag; plain run now also builds yrfi_odds_{date}.parquet.
+  run_pipeline.py       — rewritten. --today-only = 5-step daily (probable pitchers, rosters,
+                          weather, first-inning odds, predictions). Full run = 10 steps
+                          (10 -> 02 --build-lineup-history -> 11 -> 12 -> 13 -> today's data -> 14).
+                          Uses subprocess + caffeinate, per-step timing + total elapsed.
+  launch.sh             — rewritten for the YRFI daily sequence; clears yrfi_odds/todays_yrfi
+                          stale files; restarts headless Streamlit; opens Chrome.
+
+PHASE 3 — DASHBOARD (app.py fully rewritten from scratch):
+  Landing game list (header + refresh + metrics + filters + one card per game) and a 7-section
+  detail view (model summary + book table, weather/park, both pitcher profiles, both teams'
+  projected top-5 batters, historical YRFI context). Verified in-browser end to end: landing
+  cards render, "View details" opens the detail view, all 7 sections populate. Fixed during test:
+  $ triggering LaTeX in markdown (escaped \$), dark table-highlight contrast (light tints),
+  NaN-truthy "Spots: nan%" bug in the lineup-frequency line, float GS "196.000000" -> int.
+
+BUILD RUN (2026-09-09, all commands < 1 min each except the overnight download):
+  10 (0.3m) -> 02 --build-lineup-history (15s) -> 11 (0.2m) -> 12 (0m) -> 13 (0.1m) ->
+  02 --probable-pitchers-only / --rosters-only / 03 / 04 --yrfi-only / 14.
+  Result: 14 games predicted for 2026-09-09. NRFI edges up to +13.8%, YRFI edges up to +16.4%.
+  Streamlit running on :8501, Chrome opened.
+
+DATA GAPS FLAGGED (all expected — user planned a two-day process):
+  - statcast_inn1 download still running (2015-2023 done at handoff). Re-run src/11 -> 13 -> 14
+    tomorrow for full inning-1 pitcher pitch metrics.
+  - batter_rolling.parquet stale at 2026-06-01 -> L7/L30 batter form is 3 months old. Re-run
+    src/01 then src/12 -> 14.
+  - yrfi_outcomes first-inning batter slots only ~42% populated -> ~100% after the inn1 download
+    (re-run src/10).
+  - 03_fetch_weather.py doesn't fetch forecast weather for today's game_pks -> today's non-dome
+    games use median/dome imputation.
+  - Training carries mild look-ahead bias (static pitcher/batter profiles, not point-in-time).
+
+FILES CHANGED: src/10-14 (new), src/yrfi_features.py (new), src/park_factors.py (new),
+src/fetch_inn1_statcast.py (new), src/04_fetch_odds.py, run_pipeline.py, launch.sh, app.py
+(rewritten), claude-context.txt (rewritten), claude-prompts.txt (this entry).
+
+=== 2026-09-09 (Part 2) — WEATHER STADIUM-RESOLUTION BUG ===
+TASK: Troubleshoot why weather was missing for Rate Field (CWS) and Yankee Stadium (NYY); apply
+the fix.
+ROOT CAUSE: src/03_fetch_weather.py picked a stadium by testing whether a team's abbreviation was a
+SUBSTRING of the full team name (`if abbr in home_team_name.upper()`). This only works when the abbr
+letters happen to appear in order in the name. It silently:
+  - MISSED 14 stadiums whose abbr isn't a substring of the name: CWS (Chicago White Sox), NYY
+    (New York Yankees), CHC (Chicago Cubs), NYM (New York Mets), KC (Kansas City Royals), SD (San
+    Diego Padres), SF (San Francisco Giants), STL (St. Louis Cardinals), TB (Tampa Bay Rays), LAD
+    (Los Angeles Dodgers), WSH (Washington Nationals), LAA (Los Angeles Angels), OAK ("Athletics"
+    after the 2025 rename — "Oakland Athletics" used to match), plus the old "Florida Marlins".
+  - MIS-ASSIGNED every Seattle Mariners home game to Arizona, because "ARI" is a substring of
+    "mARIners" -> Chase Field / Phoenix desert weather on Mariners games (ARI had 1842 rows =
+    Arizona + Seattle home games double-counted).
+Net effect: game_weather.parquet covered only 17 of 30 stadiums; ~half of all historical games had
+no weather (model median-imputed) and all Mariners home games had wrong weather.
+FIX (src/03_fetch_weather.py rewritten):
+  - TEAM_ID_TO_ABBR canonical map; resolve stadium by home_team_id (with a name-keyword fallback).
+  - Coordinates now come from src/park_factors.py (single source of truth, all 30, correct — incl.
+    Athletics = Sutter Health Park, Sacramento, not Oakland Coliseum).
+  - CF_DIRECTION dict for the wind-out-component bearing.
+  - Game universe = yrfi_outcomes.parquet (full 2015-2026) ∪ schedule.parquet (today/upcoming),
+    so weather isn't limited to schedule.parquet's 2026-only rows.
+  - Batched fetch: one ranged Open-Meteo call per stadium-season (~330 calls) instead of ~25k
+    per-game calls. Archive vs forecast split at a 5-day boundary; today's games use the forecast
+    API (the archive API lags ~5 days, so today's games were previously null or skipped).
+  - CLI: `--today-only` (today + next ~2 weeks, always refreshed), `--rebuild` (every game).
+VERIFIED: today's slate 14/14 games now have weather — Rate Field/CWS 77°F wind 5mph@250°,
+Yankee Stadium/NYY 81°F wind 10mph@188° (blowing in), Seattle 70°F (not Phoenix's 89°F).
+Full --rebuild: game_weather.parquet now 30/30 stadiums.
+DOWNSTREAM: statcast_inn1 download also completed (11/11 seasons, 30 min) — re-ran
+src/10 -> src/11 -> src/13 -> src/14 with full inning-1 pitcher pitch metrics AND clean weather.
+FILES CHANGED: src/03_fetch_weather.py (rewritten), run_pipeline.py (weather step flags),
+launch.sh (weather --today-only), claude-context.txt, claude-prompts.txt.
+
+=== 2026-09-09 (Part 3) — GAME CARD REDESIGN ===
+TASK: Rearrange each landing-page game card.
+CHANGES:
+  app.py game_card() rewritten as 3 columns:
+    - LEFT: the two teams stacked tightly on top of each other, each row = team logo
+      (https://www.mlbstatic.com/team-logos/{team_id}.svg) + abbr + W-L record + probable pitcher +
+      that pitcher's season/L5 NRFI%. Then a "@ park · temp/wind · probable/confirmed" line.
+    - MIDDLE ("MODEL"): BOTH model odds present — NRFI row and YRFI row — with the better-value
+      side bold + a "◄" marker and its win-prob %. Better value = side with the higher market edge
+      (nrfi_edge_pct vs yrfi_edge_pct); when no odds, the model favourite.
+    - RIGHT ("BOOK LINES"): a 2×4 HTML table (NRFI / YRFI rows × DK / FD / MGM / CZR columns) with
+      a "checked {Mon D, H:MM AM}" timestamp underneath.
+    - Bottom strip: recommended-bet badge · edge% · EV/$100 · best line · "View details →".
+  New app helpers: logo_img(), _fmt_checked(), _better_value_side(), _book_line_table().
+    Removed _book_odds_html().
+  src/14_build_todays_yrfi.py:
+    - team_records(season): one call to the MLB standings endpoint -> {team_id: "W-L"}.
+    - Output now carries home_team_id / away_team_id, home_team_record / away_team_record,
+      and odds_checked_at (ISO minute string = mtime of yrfi_odds_{date}.parquet).
+VERIFIED in-browser: logos render, records show (TOR 73-73 / ATH 58-88), both model odds present
+with the value side bold+◄, book table populated, "checked Sep 9, 11:48 AM" shows. Detail view
+unaffected. Fixed a stray "\$" that leaked from an HTML string (no markdown escaping needed inside
+a raw <div>).
+FILES CHANGED: app.py, src/14_build_todays_yrfi.py, claude-context.txt, claude-prompts.txt.
+
+=== 2026-09-09 (Part 4) — DIRECT SPORTSBOOK LINKS ON THE HOME PAGE ===
+TASK: Put direct sportsbook links on the landing page for every game.
+CHANGES (app.py):
+  - _book_line_table(): each column header (DK↗ FD↗ MGM↗ CZR↗, in brand colours) and each
+    non-empty odds cell in the NRFI/YRFI rows is now an <a target="_blank"> link to
+    BOOK_BET_URL[bk] (DraftKings/FanDuel/BetMGM/Caesars MLB pages). Empty cells stay "—".
+  - game_card() bottom strip: "best {Book} {odds}↗" is now a direct sportsbook link too.
+  The Odds API does not provide bet-slip deeplinks for the first-inning market, so links point at
+  each book's MLB lobby (BOOK_BET_URL). Verified: FanDuel +100 cell -> href
+  https://sportsbook.fanduel.com/baseball, opens in a new tab.
+FILES CHANGED: app.py, claude-context.txt, claude-prompts.txt.
+
+=== 2026-09-09 (Part 5) — FIRST-INNING ODDS: DK/CZR BLANK + BET365/FANATICS SEARCH ===
+TASK: Troubleshoot why the DraftKings and Caesars columns of the book-lines table were always
+blank; add bet365 or Fanatics if available.
+
+DIAGNOSIS (not a code bug — a data-availability gap):
+  The Odds API's first-inning total (totals_1st_1_innings) is only published by 9 of its 48 MLB
+  bookmakers: fanduel, betmgm, pinnacle, betrivers, ballybet, betparx, kalshi, tabtouch, unibet —
+  and betparx/ballybet only list a 1.5 line, not the 0.5 YRFI/NRFI line. DraftKings and Caesars
+  do NOT expose that derivative market through The Odds API at all. Our FI_BOOK_KEYS filtered to
+  {DK, FD, MGM, CZR}, so only FD and MGM ever matched -> DK / CZR columns permanently "—".
+
+FIX (src/04_fetch_odds.py):
+  - New fetch_sgo_first_inning(date_str): pulls first-inning O/U from SportsGameOdds
+    (SGO_API_KEY, already in env.txt) via odds keys points-all-1i-ou-over / -under. SGO carries
+    the 0.5 line for DraftKings, FanDuel, BetMGM AND Caesars, plus a de-vigged `fairOdds`.
+  - build_yrfi_odds_table() now: SGO first, The Odds API as fallback. Uses SGO fairOdds for
+    yrfi/nrfi_market_avg_implied when present (falls back to cross-book de-vig average). Adds an
+    `odds_source` column. Widened the SGO date window to date+1 08:00Z to catch late west-coast
+    games.
+  - Constants added: SGO_FI_OVER_KEY, SGO_FI_UNDER_KEY. FI_BOOK_KEYS unchanged (DK/FD/MGM/CZR).
+  No app.py change needed — BOOK_META was already DK/FD/MGM/CZR; those columns now fill.
+
+BET365 / FANATICS: searched The Odds API (regions us, us2, us_ex, uk, eu, au — 48 MLB books) and
+SportsGameOdds (9 books: betmgm, bovada, caesars, draftkings, espnbet, fanduel, pointsbet, unibet,
+williamhill). Neither service carries bet365 or Fanatics Sportsbook for MLB. Not addable without a
+dedicated third source (documented in code + context).
+
+VERIFIED: yrfi_odds_2026-09-09.parquet now has 120 book lines across 15 games with all of
+DK / FD / MGM / CZR populated; dashboard book-lines table shows 4 filled columns; "checked" stamp
+refreshed. Edges shifted slightly (now anchored to SGO fairOdds, e.g. TOR@ATH +15.7% -> +14.7%).
+FILES CHANGED: src/04_fetch_odds.py, claude-context.txt, claude-prompts.txt.
+
+=== 2026-09-09 (Part 6) — INSTANT ADD-TO-BETSLIP DEEPLINKS ===
+TASK: Make the book-line links add the exact YRFI/NRFI selection to the betslip instantly (like
+Pikkit). If not instantly available, list options + cost + scope.
+
+FINDING: SportsGameOdds already returns a per-bet `deeplink` on each byBookmaker entry for the
+first-inning O/U market — the same partner-deeplink mechanism Pikkit uses. Coverage checked over
+8 selections (YRFI+NRFI × 4 games):
+  FanDuel   8/8  https://sportsbook.fanduel.com/addToBetslip?marketId=<m>&selectionId=<s>
+  Caesars   8/8  https://sportsbook.caesars.com/us/nj/bet/betslip?selectionIds=<uuid>
+  BetMGM    8/8  https://sports.nj.betmgm.com/en/sports?options=<a-b-c>
+  DraftKings 0/8 — SGO provides no deeplink for this market for DK.
+Cost: $0 — SGO free tier, key already in env.txt. Scope: implemented now.
+
+IMPLEMENTATION:
+  src/04_fetch_odds.py:
+    - fetch_sgo_first_inning() now captures bk_val["deeplink"] into the long df.
+    - build_yrfi_odds_table() writes {yrfi,nrfi}_link_{DK,FD,MGM,CZR} and best_{yrfi,nrfi}_link.
+  app.py:
+    - _bet_url(r, side, bk) -> (url, is_instant): the SGO deeplink if present, else BOOK_BET_URL lobby.
+    - _book_line_table(): each odds cell links via _bet_url; ⚡ suffix when instant, ↗ when lobby.
+    - card bottom strip "best {Book} {odds}⚡/↗" uses best_{side}_link.
+    - detail Section 1: replaced the 4 generic "bet slip" buttons with a side-aware row
+      "⚡/↗ {Book} {SIDE} {odds}" for the recommended/better-value side + a
+      "⚡ Add {SIDE} to {Book} betslip" button under the Best Bet callout.
+    - sidebar caveat added re: deeplinks being US/NJ-scoped.
+
+OPTIONS FOR DRAFTKINGS INSTANT LINKS (not done — for the record):
+  1. The Odds API "Links" add-on ($) — returns betslip links, BUT The Odds API doesn't carry the
+     first-inning market for DraftKings anyway, so it wouldn't help here.
+  2. Scrape DraftKings' own ?outcomes= URL scheme directly — needs DK's internal outcome IDs;
+     unofficial, brittle, ToS-risky. Not recommended.
+  3. Commercial betslip-link feed (OddsJam / Pikkit-style partner API) — paid, typically
+     $100-500+/mo. Overkill for one missing book.
+  DECISION: leave DK as a lobby link (↗); FD/CZR/MGM cover the instant case.
+
+VERIFIED in browser: book cells show e.g. "+104⚡" (FD), "-102⚡" (MGM), "-110⚡" (CZR), "-105" (DK,
+no ⚡). FanDuel cell href = https://sportsbook.fanduel.com/addToBetslip?marketId=717.185629905&
+selectionId=7017906. Detail view shows "⚡ FD NRFI +104" button + "⚡ Add NRFI to FanDuel betslip".
+FILES CHANGED: src/04_fetch_odds.py, app.py, claude-context.txt, claude-prompts.txt.
+
+=== 2026-09-09 (Part 7) — MODEL WEIGHTING SLIDERS + DK CALLOUT ===
+TASK: (1) leave DK betslip links as-is but note it in the dashboard + MD. (2) Add sliders at the
+top to re-weight feature groups (pitcher vs batter, season vs L5, weather, park...) into the
+prediction, live. (3) scope bet365 / Fanatics.
+
+DK CALLOUT: added under every book-lines table — "DraftKings has no instant-betslip link — opens
+its MLB lobby". Sidebar caveat already covers the geo scope. MD updated with the 3 not-pursued
+options for DK instant links (Odds API Links add-on doesn't carry DK 1st-inn anyway; scraping
+?outcomes= is brittle/ToS-risky; commercial feed ~$100-500+/mo).
+
+WEIGHTING SLIDERS:
+  Mechanism — src/13 now also trains a LOGISTIC-REGRESSION SURROGATE on the standardised feature
+  matrix (test AUC 0.5805, ~= the RF). It gives an additive log-odds decomposition. Saved into
+  yrfi_model.pkl under "surrogate" (coef, mean, std, groups) + a "weighting" block in
+  yrfi_model_meta.json (group_labels, group_influence = avg |log-odds| the model leans on).
+  Feature groups defined in src/yrfi_features.py FEATURE_GROUPS / GROUP_LABELS:
+    pitcher_stuff, pitcher_nrfi_record, pitcher_last5, lineup_offense, lineup_recent_form,
+    weather, ballpark  (month + umpire_zone_adj always weight 1).
+  src/14 per game: group_contributions() -> contrib_<group> columns + base_model_logit
+  (= logit of the RF calibrated prob).
+  app.py:
+    - render_weight_controls(meta): the ⚙️ expander. One slider per group 0-200% (default 100),
+      each with a "current lean" bar (group_influence normalised). "Reset to model" button.
+      Sliders held in st.session_state["weights"]. Does NOT need to sum to 100 — each is independent.
+    - apply_weights(pred, weights): adj_logit = base_model_logit + Σ (w_g/100 - 1)·contrib_g;
+      recomputes model_yrfi/nrfi_prob, *_model_odds, *_edge_pct, recommended_bet, recommended_bet_ev
+      (keeps the originals as *_model). No-op when every slider == 100.
+    - main() calls both before dispatching to landing/detail, so every card + the detail view use
+      the re-weighted numbers. Cards show "⚙️ YOUR WEIGHTING" + "(model X%)"; detail Section 1
+      shows an info banner with the model's own prediction.
+  Group influence at this training (avg |log-odds|): pitcher_nrfi_record 0.23 (dominant),
+  ballpark 0.075, lineup_offense 0.045, weather 0.044, lineup_recent_form 0.041, pitcher_stuff
+  0.030, pitcher_last5 0.013.
+  VERIFIED: dragging "Pitcher NRFI track record" to ~40% moved TOR@ATH NRFI 63% -> 55%,
+  AZ@KC flipped to BET YRFI +7.7%, "Strong NRFI edges" metric 5 -> 2, sort reordered — all live.
+
+BET365 / FANATICS SCOPE: neither is on SGO (9 books) or The Odds API (48 books, all regions).
+Options to add: OddsJam API (~$99-799/mo, has both in some states — verify 1st-inn market + book
+list in the tier), OpticOdds (enterprise), BetsAPI (~£15-70/mo, bet365 only, no clean 1st-inn).
+bet365 has no public API + heavy bot protection (don't scrape). Integration effort once a feed
+exists: ~1-2 hrs per book.
+FILES CHANGED: src/yrfi_features.py, src/13_train_yrfi_model.py, src/14_build_todays_yrfi.py,
+app.py, claude-context.txt, claude-prompts.txt.
+
+=== 2026-09-09 (Part 8) — WEIGHTING CALLOUT · HR-FACTOR CONTEXT · TOP-OF-ORDER REBUILD ·
+                          BRADY BASSO / 2026-FEED DATA BUG ===
+TASK: (1) live % weighting callout under the sliders; (2) explain HR Factor in the detail view;
+(3) restructure Top-of-Order sections (vs-pitcher table first + no-data note, then L7/L30/Season
+OBP/OPS/R/AB); (4) note the future per-pitch batted-ball project, keep pitch data aside;
+(5) troubleshoot Brady Basso showing no home/away + no 1st-inning pitch counts for 2026.
+
+1. EFFECTIVE-WEIGHTING CALLOUT (app.py render_weight_controls):
+   "Effective weighting right now" — a live stacked colour bar + sorted legend under the sliders.
+   Each group's share = (slider% / 100 × the model's lean for that group) renormalised to 100%.
+   Recomputes on every slider move (Streamlit rerun). At default 100% sliders it shows the model's
+   own relative weighting (pitcher NRFI record 50%, ballpark 13%, weather 11%, ...).
+   Also fixed a crash: "Reset to model" did st.session_state[f"w_{g}"] = 100 AFTER the slider
+   widget was drawn -> StreamlitAPIException. Now pops the widget keys so the slider re-inits.
+
+2. HR FACTOR CONTEXT (app.py section_weather_park):
+   Now: "HR factor: 92 — <well below average> (hard to homer here)" colour-coded, plus a caption
+   "100 = MLB average park for HRs; above = more HRs (dimensions/altitude/air), below = fewer;
+   nudges the model's first-inning run probability up in homer-friendly parks."
+
+3. TOP-OF-ORDER REBUILD (app.py section_batters):
+   Table 1 (primary) "vs {SP}" = batter-vs-this-pitcher BvP transposed (PA/AVG/OBP/K%/BB%/HR).
+   Shows "🚫 No matchup data — batter has not faced this pitcher" at 0 PA, "⚠️ small sample"
+   under 5 PA.
+   Table 2 "recent & season" = rows AB/R/OBP/OPS × columns L7/L30/Season.
+   Kept: season line, limited-sample warning, lineup-spot frequencies.
+   New data path: src/02 build_lineup_position_stats now also writes
+   data/processed/batter_game_logs.parquet (one row per batter per game from the boxscores).
+   src/12 computes real L7/L30/season OBP/OPS/R/AB windows from it (was OBP-only from the stale
+   batter_rolling), and pulls seas_r / an accurate seas_ab / seas_slg / seas_ops from the full
+   game log.
+
+4. FUTURE PROJECT — PER-PITCH BATTED-BALL MODEL: noted in claude-context.txt (own section) +
+   a callout at the end of the home-team Top-of-Order section. Grade each batter on batted-ball
+   success vs SIMILAR pitches (velo band for fastballs, pitch type for breaking/offspeed). Shown
+   ALONGSIDE, never inside, the trained YRFI model. Individual-pitch data otherwise left aside.
+
+5. BRADY BASSO / 2026 DATA BUG — two root causes:
+   (a) statcast_inn1_*.csv stopped at 2025 -> no 2026 pitch data -> inning_1_pitches, velo, and
+       2026 pitch-rate metrics were NaN for every 2026 start. FIX: extended
+       src/fetch_inn1_statcast.py SEASONS to 2026 and downloaded statcast_inn1_2026.csv (2180
+       games, 2.8 min). Pitch metrics now 1335/1344 pitchers (was 1289); Basso's 5 last starts
+       show pitches 11/15/16/22/14 and velo 91.0/89.9/89.6/89.1/85.1.
+   (b) src/11 stored only home_nrfi_pct / away_nrfi_pct — no start counts, no ERA splits — so the
+       detail-view Home/Away rows looked empty. FIX: agg_nrfi() now also emits home_starts,
+       away_starts, home_first_inn_era, away_first_inn_era; app section_pitcher shows GS + YRFI% +
+       1st ERA on those rows. Basso: Home 3 GS / 67% / 9.00 ERA, Away 6 GS / 67% / 6.00 ERA.
+   (c) SECONDARY (found while fixing): 2026 game feeds were cached only through June 30 — so
+       lineup_position_summary, batter_game_logs, and the top-5 projection were 2+ months stale.
+       FIX: new src/backfill_feeds.py fetched the 900 missing Jul-Sep feeds; re-ran 02
+       --build-lineup-history -> 12 -> 13 -> 14. batter_game_logs 25.7k -> 44.1k rows, as-of
+       2026-09-08; TOR top-5 now projects Springer / Lukes / Guerrero / Okamoto / Varsho with
+       real L7/L30 numbers (Vlad L7 OPS 1.009).
+
+REBUILD RUN: fetch_inn1_statcast (2026) -> backfill_feeds (900) -> 10 -> 02 --build-lineup-history
+-> 11 -> 12 -> 13 -> 14. Model test AUC 0.5548, surrogate 0.5785; lineup_recent_form influence
+0.0096 -> 0.037 now that L7/L30 data is real.
+FILES CHANGED: app.py, src/02_fetch_mlb_api.py, src/11_build_pitcher_nrfi.py,
+src/12_build_top_order_batter.py, src/13_train_yrfi_model.py, src/14_build_todays_yrfi.py,
+src/yrfi_features.py (unchanged this part), src/fetch_inn1_statcast.py, src/backfill_feeds.py
+(new), claude-context.txt, claude-prompts.txt.
+
+=== 2026-09-09 (Part 9) — FANDUEL BETSLIP DEEPLINK BROKEN ===
+TASK: User reported the FanDuel ⚡ link opens a betslip-looking page, asks for a state, then says
+"Selection not added — network issue, or no longer available".
+DIAGNOSIS: SGO's FanDuel deeplink for points-all-1i-ou is
+  https://sportsbook.fanduel.com/addToBetslip?marketId=<unique per game>&selectionId=<GENERIC>
+The marketId is unique per game but the selectionId is a TEMPLATE: 7017905 for every game's Over,
+7017906 for every Under (confirmed across 10+ games — 10 distinct marketIds, 2 distinct
+selectionIds total). FanDuel needs the real per-market selection id, so it rejects the template.
+Caesars (20/20 distinct uuids) and BetMGM (20/20 distinct option strings) are genuine and work.
+DraftKings gives no deeplink.
+FIX (src/04_fetch_odds.py fetch_sgo_first_inning): after collecting rows, extract each deeplink's
+*selection token* (selectionId / selectionIds / BetMGM last option segment) and, per (book, side),
+if >=3 games share <=2 distinct tokens, null that book's deeplinks. FanDuel now drops to a lobby
+link (↗) like DraftKings; ⚡ instant-betslip remains only for Caesars & BetMGM.
+app.py: book-lines note + detail-view caption + sidebar caveat updated — "⚡ works on Caesars &
+BetMGM · DraftKings & FanDuel open their MLB lobby (no working instant link)".
+VERIFIED: yrfi_odds now has 60 instant deeplinks (MGM 30 + CZR 30), FD/DK 0. Dashboard: FD cells
+show plain odds (lobby ↗), MGM/CZR show ⚡.
+FILES CHANGED: src/04_fetch_odds.py, app.py, claude-context.txt, claude-prompts.txt.
