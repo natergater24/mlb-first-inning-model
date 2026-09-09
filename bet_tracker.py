@@ -22,7 +22,9 @@ Row schema (one row per bet; multiple bets per game / per book allowed):
     side           NRFI | YRFI
     book           DraftKings | FanDuel | BetMGM | Caesars | Other
     odds           American (e.g. 100, -120)
-    units          float
+    units          float — stake in units
+    unit_size      dollars per unit at the time this bet was placed (frozen, so
+                   older bets keep their value when the current unit size changes)
     status         open | won | lost
     first_inn_runs total 1st-inning runs at grade time
     graded_at      ISO-8601 UTC
@@ -43,8 +45,10 @@ BET_LOG = ROOT / "data" / "bet_log.csv"
 COLUMNS = [
     "bet_id", "placed_at", "game_pk", "game_date", "game_start",
     "away_team", "home_team", "side", "book", "odds", "units",
-    "status", "first_inn_runs", "graded_at", "result_units",
+    "unit_size", "status", "first_inn_runs", "graded_at", "result_units",
 ]
+
+DEFAULT_UNIT_SIZE = 25.0  # dollars per unit
 
 BOOKS = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "Other"]
 # app.py BOOK_META short code -> full name used here
@@ -69,7 +73,22 @@ def load_bets() -> pd.DataFrame:
     for c in COLUMNS:
         if c not in df.columns:
             df[c] = pd.NA
+    # Rows written before per-bet unit size existed keep the default.
+    df["unit_size"] = pd.to_numeric(df["unit_size"], errors="coerce").fillna(DEFAULT_UNIT_SIZE)
     return df[COLUMNS].copy()
+
+
+def current_unit_size(df: pd.DataFrame | None = None) -> float:
+    """The unit size of the most recently placed bet (fallback: the default)."""
+    if df is None:
+        df = load_bets()
+    if df.empty:
+        return DEFAULT_UNIT_SIZE
+    latest = df.sort_values("placed_at").iloc[-1]["unit_size"]
+    try:
+        return float(latest)
+    except (TypeError, ValueError):
+        return DEFAULT_UNIT_SIZE
 
 
 def save_bets(df: pd.DataFrame) -> None:
@@ -131,7 +150,7 @@ def first_inning_runs(game_pk) -> int | None:
 
 # ── add / edit / delete ───────────────────────────────────────────────────
 def add_bet(*, game_pk, game_date, away_team, home_team, side, book,
-            odds, units, game_start=None) -> str:
+            odds, units, unit_size=DEFAULT_UNIT_SIZE, game_start=None) -> str:
     df = load_bets()
     bet_id = uuid.uuid4().hex[:12]
     if game_start is None:
@@ -143,6 +162,7 @@ def add_bet(*, game_pk, game_date, away_team, home_team, side, book,
         "away_team": away_team, "home_team": home_team,
         "side": str(side).upper(), "book": book,
         "odds": float(odds), "units": float(units),
+        "unit_size": float(unit_size),
         "status": "open", "first_inn_runs": pd.NA,
         "graded_at": pd.NA, "result_units": pd.NA,
     }
@@ -212,7 +232,15 @@ def grade_open_bets(df: pd.DataFrame | None = None) -> tuple[pd.DataFrame, int]:
 
 
 # ── tracker ───────────────────────────────────────────────────────────────
-def tracker_stats(df: pd.DataFrame, unit_size: float = 100.0) -> dict:
+def _net_dollars(rows: pd.DataFrame) -> float:
+    """Sum result_units * that bet's own unit_size (so past bets keep the unit
+    size they were placed at even after the current unit size changes)."""
+    ru = pd.to_numeric(rows["result_units"], errors="coerce").fillna(0.0)
+    us = pd.to_numeric(rows["unit_size"], errors="coerce").fillna(DEFAULT_UNIT_SIZE)
+    return float((ru * us).sum())
+
+
+def tracker_stats(df: pd.DataFrame) -> dict:
     graded = df[df["status"].isin(["won", "lost"])]
     wins = int((graded["status"] == "won").sum())
     losses = int((graded["status"] == "lost").sum())
@@ -223,6 +251,27 @@ def tracker_stats(df: pd.DataFrame, unit_size: float = 100.0) -> dict:
         "losses": losses,
         "open": int((df["status"] == "open").sum()),
         "net_units": round(net_units, 2),
-        "net_dollars": round(net_units * float(unit_size), 2),
+        "net_dollars": round(_net_dollars(graded), 2),
         "roi_pct": round(100 * net_units / staked, 1) if staked else 0.0,
     }
+
+
+def record_by_book(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-sportsbook W-L, net units and net dollars (dollars use each bet's own
+    unit size). One row per book that has at least one bet."""
+    if df.empty:
+        return pd.DataFrame(columns=["Book", "W-L", "Units", "$", "Open"])
+    rows = []
+    for book, g in df.groupby("book"):
+        graded = g[g["status"].isin(["won", "lost"])]
+        rows.append({
+            "Book": book,
+            "W-L": f"{int((graded['status'] == 'won').sum())}-"
+                   f"{int((graded['status'] == 'lost').sum())}",
+            "Units": round(float(pd.to_numeric(graded["result_units"],
+                                               errors="coerce").sum()), 2),
+            "$": round(_net_dollars(graded), 2),
+            "Open": int((g["status"] == "open").sum()),
+        })
+    out = pd.DataFrame(rows)
+    return out.sort_values("$", ascending=False).reset_index(drop=True)

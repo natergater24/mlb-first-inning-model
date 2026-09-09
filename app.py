@@ -1046,30 +1046,40 @@ def tracker_bar():
         if n:
             st.toast(f"Graded {n} bet{'s' if n != 1 else ''}")
 
-    unit_size = float(st.session_state.setdefault("unit_size", 100.0))
-    s = bt.tracker_stats(df, unit_size)
+    # $/unit for NEW bets — defaults to the most recent bet's size; older bets
+    # keep the unit size they were logged at.
+    default_us = bt.current_unit_size(df)
+    unit_size = float(st.session_state.setdefault("unit_size", default_us))
+    s = bt.tracker_stats(df)
     col = "#1a9850" if s["net_units"] > 0 else "#d73027" if s["net_units"] < 0 else "#555"
 
     c1, c2, c3 = st.columns([3, 1, 1])
     with c1:
         st.markdown(
-            f"<div style='font-size:22px;font-weight:800;line-height:1.3'>"
+            f"<div style='font-size:26px;font-weight:800;line-height:1.25'>"
             f"📊 {s['wins']}-{s['losses']} "
-            f"<span style='color:{col}'>| {s['net_units']:+.1f} units | "
-            f"{_money(s['net_dollars'])}</span>"
-            f"<span style='font-size:13px;color:#888;font-weight:400'>"
-            f"  ·  {s['open']} open  ·  ROI {s['roi_pct']:+.1f}%</span></div>",
+            f"<span style='color:{col}'>&nbsp;|&nbsp; {s['net_units']:+.1f}u "
+            f"&nbsp;|&nbsp; {_money(s['net_dollars'])}</span></div>"
+            f"<div style='font-size:12px;color:#888'>combined record · "
+            f"{s['open']} open · ROI {s['roi_pct']:+.1f}%</div>",
             unsafe_allow_html=True)
     with c2:
         st.session_state["unit_size"] = st.number_input(
-            "$ / unit", min_value=1.0, value=unit_size, step=25.0,
-            label_visibility="collapsed")
+            "$ / unit (new bets)", min_value=1.0, value=unit_size, step=5.0)
     with c3:
+        st.write("")
         if st.button("↻ Grade bets", use_container_width=True):
             _, n = bt.grade_open_bets()
             st.toast(f"Graded {n} bet{'s' if n != 1 else ''}" if n
                      else "No bets ready to grade yet")
             st.rerun()
+
+    by_book = bt.record_by_book(df)
+    if not by_book.empty:
+        with st.expander("📚 Record by sportsbook"):
+            st.dataframe(
+                by_book.style.format({"Units": "{:+.2f}", "$": _money}),
+                hide_index=True, use_container_width=True)
 
     with st.expander(f"🧾 Bet log ({len(df)})"):
         render_bet_log(df, ctx="log")
@@ -1142,12 +1152,16 @@ def section_track_bet(r):
     # key varies with side/book so the field re-prefills when either changes
     odds = c3.number_input("Odds (American)", value=prefill, step=5.0,
                            key=f"tb_odds_{pk}_{side}_{book}")
-    units = c4.number_input("Units", min_value=0.0, value=1.0, step=0.5,
+    units = c4.number_input("Units staked", min_value=0.0, value=1.0, step=0.5,
                             key=f"tb_units_{pk}")
+    us = float(st.session_state.get("unit_size", bt.DEFAULT_UNIT_SIZE))
+    st.caption(f"Stake is in **units** · 1 unit = \\${us:g} (set at the top) · "
+               f"this bet risks {units:g}u = \\${units * us:,.0f}")
     if st.button("➕ Log this bet", key=f"tb_log_{pk}", type="primary"):
         bt.add_bet(game_pk=pk, game_date=str(r.get("game_date", TODAY)),
                    away_team=r["away_team"], home_team=r["home_team"],
-                   side=side, book=book, odds=float(odds), units=float(units))
+                   side=side, book=book, odds=float(odds), units=float(units),
+                   unit_size=us)
         st.session_state["_bets_graded"] = False
         st.toast(f"Logged {side} {bt.american_str(odds)} · {units:g}u")
         st.rerun()

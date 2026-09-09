@@ -246,15 +246,22 @@ all storage behind these two fns so a GitHub-API write-back can be added later),
 update_bet / delete_bet / is_editable (open AND now < game_start, start fetched from the MLB
 schedule API at log time), grade_open_bets (MLB Stats API linescore — 1st-inning runs; NRFI wins
 on 0, YRFI on >=1; only once the 1st is complete, or early if a run already scored; NO pushes),
-tracker_stats (W-L, net units, net $, ROI). result_units = units*payout on win, -units on loss.
+tracker_stats (W-L, net units, net $, ROI), record_by_book (per-book W-L / units / $),
+current_unit_size (most recent bet's size, else DEFAULT_UNIT_SIZE=25). result_units = units*payout
+on win, -units on loss. DYNAMIC $ ACCOUNTING: each bet row stores unit_size (dollars/unit at log
+time, frozen); net $ = Σ result_units_i * unit_size_i, so changing $/unit only affects new bets.
 app.py: tracker_bar() at the very top of every view (main() calls it before render_weight_controls)
-= "W-L | +X units | +$X,XXX · N open · ROI" + $/unit box (session, default 100) + "Grade bets"
-button + "Bet log" expander (edit/delete inline for editable bets — keys namespaced by a ctx
-prefix so the same bet can render in the top log AND the per-game list without a
-StreamlitDuplicateElementKey). section_track_bet(r) between detail sections 1 and 2: side (default
-= recommended bet), book, odds (prefilled from that book's line, key varies with side/book so it
-re-prefills), units. Auto-grades once per browser session on load. Seed row: TOR@ATH 2026-09-09
-NRFI FanDuel +100 1u won -> tracker reads 1-0 | +1.0 units | +$100.
+= prominent "W-L | +Xu | +$X,XXX" (26px) + small "combined record · N open · ROI" line, a
+"$ / unit (new bets)" box (default = current_unit_size, i.e. $25), a "Grade bets" button, a
+"📚 Record by sportsbook" expander (bt.record_by_book table) and a "🧾 Bet log" expander
+(edit/delete inline for editable bets — widget keys namespaced by a `ctx` prefix so the same bet
+can render in the top log AND the per-game list without StreamlitDuplicateElementKey).
+section_track_bet(r) between detail sections 1 and 2: side (default = recommended bet), book, odds
+(prefilled from that book's line, key varies with side/book so it re-prefills), "Units staked"
+(caption shows \$ equivalent — the \$ must be escaped in st.caption/markdown or it triggers LaTeX),
+passes unit_size=session $/unit to add_bet. Auto-grades once per browser session on load.
+Seed row: TOR@ATH 2026-09-09 NRFI FanDuel +100 1u @ \$25/unit won -> tracker reads
+1-0 | +1.0u | +\$25.
 
 === DASHBOARD (app.py) ===
 Completely rewritten 2026-09-09. Streamlit on localhost:8501. Single page, two views:

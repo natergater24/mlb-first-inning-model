@@ -166,21 +166,30 @@ Sidebar shows model test AUC / Brier / ECE / accuracy and the caveats.
 
 ## Bet Tracker
 
-**Top of every page:** `W-L | +X units | +$X,XXX` · open bets · ROI, a `$ / unit`
-box (default 100, per session), and a **Grade bets** button. The **Bet log**
-expander lists every bet; ungraded bets whose game has not started can be edited
-(side / book / odds / units) or deleted inline.
+**Top of every page (combined record, prominent):**
+`W-L | +Xu | +$X,XXX` · open bets · ROI. Next to it a **`$ / unit (new bets)`**
+box (default **$25**) and a **Grade bets** button. Two expanders:
+- **📚 Record by sportsbook** — W-L, net units and net $ per book.
+- **🧾 Bet log** — every bet; ungraded bets whose game hasn't started can be
+  edited (side / book / odds / units) or deleted inline.
+
+**Units, not dollars.** You stake in **units**. Each bet stores the `$ / unit`
+value that was set *when you logged it*, so changing `$ / unit` later only
+affects new bets — the historical record keeps every past bet at its original
+size. `$ / unit` defaults to the most recent bet's size.
 
 **Logging a bet:** open a game -> **Track a Bet**. Side defaults to the
 recommended bet, book to DraftKings, odds pre-fill from that book's line for that
-side (editable), units default to 1. **Log this bet**.
+side (editable), **units staked** default to 1 (the caption shows the dollar
+equivalent). **Log this bet**.
 
 **Grading is automatic** — `bet_tracker.py` reads the 1st-inning runs from the
 MLB Stats API linescore (`statsapi.mlb.com/api/v1/game/{pk}/linescore`, free,
 keyless — the same source `src/10` uses). NRFI wins on 0 first-inning runs, YRFI
 on >= 1. It runs once per browser session on load and on the **Grade bets**
 button. First-inning bets never push. `result_units` = `units x odds payout` on a
-win, `-units` on a loss.
+win, `-units` on a loss. Net dollars = sum of each bet's `result_units x its own
+unit_size`.
 
 **Storage:** `data/bet_log.csv` in the repo, read/written on the local
 filesystem. `launch.sh` Step 6.5 commits + pushes it every morning so the hosted

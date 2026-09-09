@@ -981,3 +981,39 @@ site are session-only (ephemeral FS) with a caption saying so; the local app is 
 truth and launch.sh publishes it each morning.
 FILES CHANGED: bet_tracker.py (new), app.py, launch.sh, .gitignore, data/bet_log.csv (new),
 README.md, USER_MANUAL.md, claude-context.txt, claude-prompts.txt.
+
+=== 2026-09-09 (Part 15) — BET TRACKER: $25 UNITS, DYNAMIC UNIT SIZE, BY-BOOK RECORD ===
+TASK: 1 unit = $25; track stakes in units not dollars; historical dollars must use the unit
+size in effect at each bet's time (change $/unit -> only new bets affected); add a small
+record-by-sportsbook table with the combined record kept most prominent.
+
+bet_tracker.py:
+  - DEFAULT_UNIT_SIZE = 25.0. New COLUMNS entry `unit_size` (dollars/unit, frozen per bet).
+  - load_bets() backfills unit_size = 25 for pre-existing rows.
+  - add_bet(..., unit_size=DEFAULT_UNIT_SIZE) stores it on the row.
+  - current_unit_size(df) -> most recent bet's unit_size (fallback 25).
+  - _net_dollars(rows) = Σ result_units_i * unit_size_i. tracker_stats() dropped its unit_size
+    arg and uses _net_dollars over graded bets.
+  - record_by_book(df) -> DataFrame [Book, W-L, Units, $, Open], sorted by $ desc.
+
+app.py tracker_bar():
+  - combined line bigger/bolder (26px) "W-L | +Xu | +$X,XXX", secondary "combined record ·
+    N open · ROI" line under it.
+  - "$ / unit (new bets)" number_input defaults to bt.current_unit_size(df) (=$25).
+  - new "📚 Record by sportsbook" expander with the bt.record_by_book table (Styler formats
+    Units as +/-, $ via _money).
+  - tracker_stats(df) called with no unit_size arg.
+app.py section_track_bet():
+  - "Units staked" label; caption "1 unit = $X ... this bet risks Nu = $Y" (the $ escaped as
+    \$ — an unescaped pair triggered Streamlit LaTeX, showing "25 (set at the top)" mono).
+  - add_bet(..., unit_size = session_state["unit_size"]).
+
+data/bet_log.csv: added unit_size column; seed row now @ 25.0 -> tracker reads 1-0 | +1.0u | +$25.
+
+VERIFIED: python test — seed won 1u@$25 (+$25) plus a new lost 2u@$50 (-$100) -> combined
+net_units -1.0, net_dollars -$75 (each bet keeps its own size); record_by_book split correct.
+In-browser: tracker bar shows "1-0 | +1.0u | +$25", "Record by sportsbook" shows FanDuel 1-0
++1.00 +$25, Track-a-Bet caption renders "1 unit = $25 ... risks 1u = $25". Streamlit log clean.
+DEPLOY: committed + pushed (caffeinate on the streamlit runs).
+FILES CHANGED: bet_tracker.py, app.py, data/bet_log.csv, README.md (n/c this part), USER_MANUAL.md,
+claude-context.txt, claude-prompts.txt.
