@@ -229,7 +229,13 @@ data/odds/
 data/models/
   yrfi_model.pkl, yrfi_feature_importance.csv, yrfi_model_meta.json
 data/archive/ — old processed files, old models, old todays_matchups
-env.txt — ODDS_API_KEY, SGO_API_KEY (project uses env.txt not .env)
+env.txt — ODDS_API_KEY, SGO_API_KEY (project uses env.txt not .env). git-ignored via env.txt +
+  env*.txt + *env*.txt (so backup copies like "env copy.txt" are covered too); only
+  env.txt.example is committed. SECURITY (2026-09-09 Part 13): "env copy.txt" with REAL keys was
+  in the initial commit a72abf4 and pushed to GitHub — removed from tracking + .gitignore
+  hardened, but the values remain in git history. ODDS_API_KEY / SGO_API_KEY / ALERT_EMAIL_
+  PASSWORD must be rotated; scrub history (git filter-repo / BFG + force-push) or accept the
+  exposure on the private repo.
 
 === DASHBOARD (app.py) ===
 Completely rewritten 2026-09-09. Streamlit on localhost:8501. Single page, two views:

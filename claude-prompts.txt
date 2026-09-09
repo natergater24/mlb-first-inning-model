@@ -363,7 +363,7 @@ FILES CHANGED: src/04_fetch_odds.py, app.py, claude-context.txt
 === 2026-06-30 (Part 2) ===
 TASK: Integrate SportsGameOdds API as primary player props source to get real FanDuel batter odds
 PURPOSE: The Odds API provides zero FanDuel batter props (only pitcher_strikeouts). SportsGameOdds free tier provides FanDuel, DraftKings, BetMGM, Caesars, ESPNBet, Bovada batter props with per-book deeplinks to exact bet slips. Fully solves the Juan Soto "No odds" issue.
-API KEY: SGO_API_KEY=a6772441d48c15c8473f2d44214d8890 (amateur free tier, 2,500 entities/month)
+API KEY: SGO_API_KEY (amateur free tier, 2,500 entities/month) — value in env.txt, NOT in this log
 HOW SGO WAS EXPLORED: Probed /v2/events/?leagueID=MLB&oddsAvailable=true&includeOdds=true. Odds embedded in each event keyed as {statID}-{playerID}-{periodID}-{betTypeID}-{sideID}. PlayerID format: JUAN_SOTO_1_MLB. FanDuel confirmed in byBookmaker with deeplink to exact bet slip. Date filtering via startsAfter/startsBefore ISO timestamps. Pagination via nextCursor.
 VERIFICATION: Juan Soto (NYM @ TOR) returned FD batter_hits Over 0.5 at -250 with deeplink to exact FanDuel bet slip. Total: 8,286 rows across 6 bookmakers from 9 games.
 04_FETCH_ODDS.PY CHANGES:
@@ -372,7 +372,7 @@ VERIFICATION: Juan Soto (NYM @ TOR) returned FD batter_hits Over 0.5 at -250 wit
 - Added fetch_sgo_events(), parse_sgo_props(), run_sgo() functions
 - run() now calls run_sgo() after Odds API steps (runs regardless of Odds API quota)
 - Added --sgo-only CLI flag for standalone SGO fetch
-ENV.TXT CHANGES: Added SGO_API_KEY=a6772441d48c15c8473f2d44214d8890
+ENV.TXT CHANGES: Added SGO_API_KEY (value in env.txt, not logged here)
 APP.PY CHANGES:
 - build_all_books_map(): Added 'deeplink' field to each book entry
 - Badge + bet-slip URLs now use deeplink-first: bk.get("deeplink") or BOOK_URLS generic fallback
@@ -902,3 +902,32 @@ this work. Rebased Part 12's commit onto 207ce44 and pushed cleanly.
 FILES CHANGED: .gitignore, launch.sh, claude-context.txt, claude-prompts.txt +
 data/processed/{todays_yrfi_predictions,pitcher_nrfi_profile,top5_batter_stats,
 projected_top5_by_team,probable_pitchers}.parquet, data/models/yrfi_model.pkl (now tracked).
+
+=== 2026-09-09 (Part 13) — SECURITY: SECRET FILE IN REPO + DOC UPDATE ===
+TASK: "push changes and update md files" (Streamlit Cloud deployment docs).
+FOUND while auditing: `env copy.txt` (a backup of env.txt with REAL values —
+ODDS_API_KEY, SGO_API_KEY, ALERT_EMAIL_PASSWORD, Twilio placeholders) was committed
+in the initial commit a72abf4 and is on origin/main. The .gitignore only had `env.txt`
+(exact) + `.env` + `*.env`, none of which match "env copy.txt".
+ALSO: claude-prompts.txt had the literal SGO key on lines 366 + 375.
+
+CONTAINMENT (this commit):
+  - .gitignore: `env.txt` -> also `env*.txt`, `*env*.txt`, plus `!env.txt.example`.
+    Vervied: env.txt / "env copy.txt" / "my env copy.txt" all ignored; env.txt.example still tracked.
+  - `git rm --cached "env copy.txt"` (file kept on disk locally).
+  - claude-prompts.txt lines 366/375: SGO key value replaced with "value in env.txt, not logged".
+NOT done (needs the user — destructive / out of scope):
+  - Key ROTATION. The values are still in git history (a72abf4) on GitHub even after removal.
+    ODDS_API_KEY, SGO_API_KEY, and the email password should be treated as compromised.
+  - History scrub (git filter-repo / BFG + force-push) — rewrites shared history; the parallel
+    committer on this repo would need to re-clone.
+
+DOCS (the actual ask):
+  - README.md: new "Deploying to Streamlit Community Cloud" section (which data files are
+    committed + why, launch.sh Step 6.5 daily auto-push, .devcontainer) + a "Secrets" section.
+  - USER_MANUAL.md: new "Deploying to Streamlit Community Cloud" section (per-file refresh table,
+    manual full-rebuild commit command, devcontainer note); Environment Variables section gains
+    the legacy vars + the secrets-never-in-git rule; project-structure tree updated.
+  - claude-context.txt: env.txt line expanded with the ignore patterns + the security note.
+FILES CHANGED: .gitignore, README.md, USER_MANUAL.md, claude-context.txt, claude-prompts.txt;
+`env copy.txt` untracked.

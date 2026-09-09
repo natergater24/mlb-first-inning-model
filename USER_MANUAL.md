@@ -201,6 +201,46 @@ tail -50 logs/launchagent.log     # scheduled jobs
 |---|---|
 | `SGO_API_KEY` | SportsGameOdds — primary first-inning odds + betslip deeplinks |
 | `ODDS_API_KEY` | The Odds API — fallback first-inning odds (https://the-odds-api.com) |
+| `OPENWEATHER_API_KEY` | legacy — `src/03` now uses Open-Meteo (keyless); unused |
+| `TWILIO_*`, `ALERT_EMAIL_*` | legacy alerting (`src/archive/06_alert.py`); unused by the YRFI flow |
+
+**Secrets never go in git.** `.gitignore` excludes `env.txt` and any `*env*.txt`
+(e.g. an "env copy.txt" backup) — only `env.txt.example` (placeholders) is
+committed. If a real key ever lands in a commit, rotate it: it stays in git
+history even after the file is removed.
+
+---
+
+## Deploying to Streamlit Community Cloud
+
+The hosted app has no local `data/` build, so the files it reads at runtime are
+committed to the repo (everything else under `data/` stays git-ignored):
+
+| File | Refreshed |
+|---|---|
+| `data/models/yrfi_model.pkl` (~23 MB) | full rebuild only — `git add` by hand |
+| `data/processed/pitcher_nrfi_profile.parquet` | full rebuild only |
+| `data/processed/top5_batter_stats.parquet` | full rebuild only |
+| `data/processed/projected_top5_by_team.parquet` | full rebuild only |
+| `data/processed/todays_yrfi_predictions.parquet` | **daily — auto** (launch.sh Step 6.5) |
+| `data/processed/probable_pitchers.parquet` | **daily — auto** (launch.sh Step 6.5) |
+
+`launch.sh` Step 6.5 runs `git add` → `git commit -m "Daily predictions update
+<date>"` → `git push` for the two daily files after inference; Streamlit Cloud
+redeploys within a few minutes. The step is failure-tolerant — offline / auth /
+nothing-to-commit logs a warning and the dashboard still starts.
+
+After a full `run_pipeline.py`, commit the other four files manually:
+```bash
+git add data/models/yrfi_model.pkl \
+        data/processed/pitcher_nrfi_profile.parquet \
+        data/processed/top5_batter_stats.parquet \
+        data/processed/projected_top5_by_team.parquet
+git commit -m "Rebuild: refresh model + profiles" && git push
+```
+
+`.devcontainer/devcontainer.json` provides a Python 3.11 container for Codespaces
+/ VS Code that installs `requirements.txt` and serves the app on port 8501.
 
 ---
 
@@ -215,13 +255,14 @@ src/               numbered pipeline scripts (01–05 legacy/support, 10–14 YR
   archive/            pre-pivot model scripts (06–09)
 app.py             Streamlit dashboard
 run_pipeline.py    daily / full pipeline runner
-launch.sh          clear stale files → daily sequence → restart Streamlit → Chrome
+launch.sh          clear stale files → daily sequence → push predictions → restart Streamlit → Chrome
 scripts/           LaunchAgent shell wrappers
-data/              not tracked in git — rebuild locally
+.devcontainer/     Codespaces / VS Code Python container
+data/              mostly untracked (rebuild locally); a 6-file runtime subset is committed
   processed/         parquet feature/output tables
   raw/              cached Statcast CSVs, MLB schedules, game feeds
   odds/             yrfi_odds_{date}.parquet
-  models/           yrfi_model.pkl, feature_importance.csv, model_meta.json
+  models/           yrfi_model.pkl (tracked), feature_importance.csv, model_meta.json
   archive/          pre-pivot processed files + models
 claude-context.txt   full project briefing (read first)
 claude-prompts.txt   dated task log

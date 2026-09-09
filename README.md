@@ -36,11 +36,29 @@ Double-click Launch_MLB_App.command on your Desktop to run the daily update and 
 - SportsGameOdds — first-inning YRFI/NRFI market odds + betslip deeplinks, free tier (primary)
 - The Odds API — first-inning odds fallback, free tier (500 req/month)
 
+## Deploying to Streamlit Community Cloud
+The hosted app reads its data from the repo (it has no local `data/` build). `.gitignore` keeps
+`data/` excluded **except** the files the app needs at runtime, which are committed:
+`data/models/yrfi_model.pkl` and `data/processed/{todays_yrfi_predictions, pitcher_nrfi_profile,
+top5_batter_stats, projected_top5_by_team, probable_pitchers}.parquet`.
+
+`launch.sh` (Step 6.5) commits and pushes the two daily files
+(`todays_yrfi_predictions.parquet`, `probable_pitchers.parquet`) every morning after inference,
+so Streamlit Cloud redeploys with the current slate within a few minutes. The other four change
+only on a full rebuild — commit them by hand after `run_pipeline.py`.
+
+`.devcontainer/` gives Codespaces / VS Code a Python 3.11 container that installs
+`requirements.txt` and runs the app.
+
 ## Project Structure
 - src/ — all pipeline scripts numbered 01-14
 - app.py — Streamlit dashboard
 - run_pipeline.py — master pipeline runner
-- data/ — data directory (not tracked in git, rebuild locally)
+- data/ — mostly untracked (rebuild locally); a runtime subset is committed for Streamlit Cloud
+
+## Secrets
+Real API keys live only in `env.txt`, which is git-ignored (as is any `*env*.txt`). Never commit
+a file with real keys — commit `env.txt.example` only. If a key is ever committed, rotate it.
 
 ## Model Architecture
 Calibrated RandomForest classifier: train 2015-2022, validate 2023, test 2024; production fit
