@@ -20,18 +20,21 @@ A machine learning pipeline that predicts whether a run will be scored in the fi
 ### Installation
 1. Clone this repository
 2. Install dependencies: pip install -r requirements.txt
-3. Copy env.txt.example to env.txt and add your API keys
-4. Run the historical data build: python run_pipeline.py --full-rebuild
-5. Launch the dashboard: bash launch.sh
+3. Copy env.txt.example to env.txt and add your API keys (SGO_API_KEY, ODDS_API_KEY)
+4. Run the historical data build + train: python run_pipeline.py
+5. Launch the dashboard (runs the daily update first): bash launch.sh
+
+For the daily update only: python run_pipeline.py --today-only
 
 ### Daily Use
 Double-click Launch_MLB_App.command on your Desktop to run the daily update and open the dashboard.
 
 ## Data Sources
-- Baseball Savant (Statcast) — pitch-level data, free
-- MLB Stats API — schedules, rosters, lineups, free
-- Open-Meteo — weather forecasts, free
-- The Odds API — YRFI/NRFI market odds, free tier available
+- MLB Stats API — schedules, rosters, lineups, first-inning linescores (ground truth), free
+- Baseball Savant (Statcast) — inning-1 pitch-level data, free
+- Open-Meteo — weather (historical + forecast), free
+- SportsGameOdds — first-inning YRFI/NRFI market odds + betslip deeplinks, free tier (primary)
+- The Odds API — first-inning odds fallback, free tier (500 req/month)
 
 ## Project Structure
 - src/ — all pipeline scripts numbered 01-14
@@ -40,5 +43,12 @@ Double-click Launch_MLB_App.command on your Desktop to run the daily update and 
 - data/ — data directory (not tracked in git, rebuild locally)
 
 ## Model Architecture
-RandomForest classifier trained on 2015-2022 data, validated on 2023, tested on 2024.
-Key features: pitcher first inning NRFI%, last 5 starts trend, top of order BvP stats, park factors, weather, umpire tendency.
+Calibrated RandomForest classifier: train 2015-2022, validate 2023, test 2024; production fit
+2015-2024 with isotonic calibration on 2025. A logistic-regression surrogate is trained alongside
+it to power the dashboard's ⚙️ feature-group weighting sliders (it never replaces the RF output).
+Key features: home/away starter first-inning NRFI% (career/season/L5) and 1st-inn ERA, pitcher
+stuff (velo, K%, BB%, hard-hit% allowed, first-pitch-strike%), last-5-starts trend, projected
+top-5 batter BvP/OBP/HR-per-PA, park factors, weather, month, umpire tendency.
+YRFI is close to a coin flip (~50.5% base rate); test AUC ~0.55, well calibrated (ECE ~0.04).
+
+See USER_MANUAL.md for full operating instructions and claude-context.txt for the design briefing.

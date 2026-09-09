@@ -328,6 +328,17 @@ odds_{date}.json, yrfi_odds_{date}.parquet, mlb_schedule_2026.json), runs the da
 (probable pitchers, rosters, weather --today-only, first-inning odds, predictions), then
 (re)starts Streamlit headless on :8501 and opens Chrome.
 
+scripts/pipeline_morning.sh / pipeline_afternoon.sh — LaunchAgent wrappers
+(~/Library/LaunchAgents/com.mlb.pipeline{,.morning,.afternoon}.plist, 10:30 / 11:00 / 13:00).
+REWRITTEN 2026-09-09 (Part 11): were still calling the archived first-at-bat scripts
+(05_build_features.py, 07_train_model.py --infer-only) and would fail post-pivot. Now: morning +
+the inline 11:00 job both run `run_pipeline.py --today-only`; afternoon runs probable pitchers +
+04 --yrfi-only + 14. The 10:30 and 11:00 jobs overlap — unload com.mlb.pipeline.morning if the
+duplicate isn't wanted. None restart Streamlit.
+
+Docs: README.md (overview + setup) and USER_MANUAL.md (full operating guide) both rewritten
+2026-09-09 for the YRFI pipeline.
+
 === FUTURE PROJECT (noted, not started) — PER-PITCH BATTED-BALL MODEL ===
 A separate scoring layer, shown ALONGSIDE (never inside) the current YRFI model:
 grade each projected top-5 batter on batted-ball success against pitches SIMILAR to what

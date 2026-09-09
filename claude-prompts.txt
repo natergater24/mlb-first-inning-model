@@ -829,3 +829,42 @@ NOT DONE (still stale, documented in claude-context.txt OUTSTANDING — not in s
 FILES CHANGED: src/02_fetch_mlb_api.py, claude-context.txt, claude-prompts.txt. Data rebuilt:
 active_rosters, projected_top5_by_team, top5_batter_stats, game_weather, yrfi_odds_2026-09-09,
 todays_yrfi_predictions.
+
+=== 2026-09-09 (Part 11) — DOC + SCHEDULER REFRESH FOR THE YRFI PIVOT ===
+TASK: Update the .md docs; fix the LaunchAgent scripts they describe.
+PURPOSE: README.md and USER_MANUAL.md still documented the pre-pivot first-at-bat pipeline, and
+the scheduled shell scripts still invoked archived scripts.
+
+FOUND: ~/Library/LaunchAgents/com.mlb.pipeline{,.morning,.afternoon}.plist are all loaded
+(10:30 / 11:00 / 13:00). scripts/pipeline_morning.sh called `src/07_train_model.py --infer-only`
+(moved to src/archive/ in the pivot) after the daily run; scripts/pipeline_afternoon.sh ran
+`src/04_fetch_odds.py --force-refresh` + `src/05_build_features.py` + `07 --infer-only` — all
+either archived or legacy. Both jobs would error after the pivot.
+
+CHANGES:
+  - scripts/pipeline_morning.sh — now just `run_pipeline.py --today-only` (inference lives inside
+    src/14 now). The inline 11:00 job (com.mlb.pipeline) already ran the same thing, so 10:30 and
+    11:00 overlap — noted in docs, unload com.mlb.pipeline.morning to drop the dupe.
+  - scripts/pipeline_afternoon.sh — now probable pitchers + `04 --yrfi-only` + `14` (odds/lines
+    firm up by 1pm; SGO primary is free so it's safe to re-run once).
+  - USER_MANUAL.md — full rewrite for YRFI: model explainer, full-path rule, launch.sh / Option
+    B/C, run_pipeline flags, per-step table, LaunchAgent table, odds (SGO primary + The Odds API
+    fallback, ⚡ = Caesars/BetMGM only), dashboard walkthrough (⚙️ sliders + 7-section detail),
+    data caveats, logs, env vars, project structure. Dropped all first-at-bat / Best Bets / BvP
+    Explorer content.
+  - README.md — fixed the install steps (`run_pipeline.py` has no --full-rebuild flag; added
+    --today-only), data sources (added SportsGameOdds + MLB linescores as ground truth), and the
+    model architecture blurb (calibration + logistic surrogate + real feature list + ~0.55 AUC).
+  - claude-context.txt — added a scripts/ + docs note under the launch.sh section.
+
+NOT DONE: the LaunchAgent plists themselves are unchanged (still point at the same shell
+scripts, which are now correct). The 10:30/11:00 overlap is left as-is (documented).
+
+VERIFIED: shell scripts are syntactically valid; no code paths reference archived scripts.
+FILES CHANGED: scripts/pipeline_morning.sh, scripts/pipeline_afternoon.sh (committed separately
+as aabaa9c "Prepare for Streamlit Community Cloud deployment"), USER_MANUAL.md, README.md,
+claude-context.txt, claude-prompts.txt.
+
+NOTE: while this session was working, commit aabaa9c landed on origin/main from another actor
+carrying this session's exact pipeline_morning.sh / pipeline_afternoon.sh edits (byte-identical,
+different message). No conflict — the doc changes here commit cleanly on top.
