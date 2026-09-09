@@ -5,8 +5,8 @@ env.txt
 
 # Large data files — too big for GitHub
 data/raw/
-data/processed/
-data/models/
+data/processed/*
+data/models/*
 data/odds/
 data/archive/
 
@@ -16,6 +16,14 @@ data/archive/
 !data/models/.gitkeep
 !data/odds/.gitkeep
 !data/archive/.gitkeep
+
+# Prediction/model files needed for Streamlit Cloud deployment (kept in sync by launch.sh)
+!data/processed/todays_yrfi_predictions.parquet
+!data/processed/pitcher_nrfi_profile.parquet
+!data/processed/top5_batter_stats.parquet
+!data/processed/projected_top5_by_team.parquet
+!data/processed/probable_pitchers.parquet
+!data/models/yrfi_model.pkl
 
 # Python
 __pycache__/
