@@ -326,7 +326,18 @@ run_pipeline.py  (full rebuild):
 launch.sh — clears stale daily files (todays_yrfi_predictions.parquet, todays_props.parquet,
 odds_{date}.json, yrfi_odds_{date}.parquet, mlb_schedule_2026.json), runs the daily sequence
 (probable pitchers, rosters, weather --today-only, first-inning odds, predictions), then
-(re)starts Streamlit headless on :8501 and opens Chrome.
+(Step 6.5) commits + pushes data/processed/todays_yrfi_predictions.parquet +
+probable_pitchers.parquet to GitHub so Streamlit Community Cloud redeploys with today's slate,
+then (re)starts Streamlit headless on :8501 and opens Chrome. The git step is failure-tolerant
+(offline / auth / nothing-to-commit never aborts the launch).
+
+STREAMLIT CLOUD: a subset of data files is committed to the repo (normally .gitignored) so the
+hosted app has them — .gitignore switches data/processed/ and data/models/ to /* form + explicit
+!negations for: todays_yrfi_predictions, pitcher_nrfi_profile, top5_batter_stats,
+projected_top5_by_team, probable_pitchers (all data/processed) and data/models/yrfi_model.pkl
+(23 MB). Everything else under data/ stays excluded. The two prediction files are refreshed
+daily by launch.sh Step 6.5; the other four change only on a full rebuild (commit them manually
+after src/11/12/13).
 
 scripts/pipeline_morning.sh / pipeline_afternoon.sh — LaunchAgent wrappers
 (~/Library/LaunchAgents/com.mlb.pipeline{,.morning,.afternoon}.plist, 10:30 / 11:00 / 13:00).

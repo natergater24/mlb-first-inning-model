@@ -868,3 +868,37 @@ claude-context.txt, claude-prompts.txt.
 NOTE: while this session was working, commit aabaa9c landed on origin/main from another actor
 carrying this session's exact pipeline_morning.sh / pipeline_afternoon.sh edits (byte-identical,
 different message). No conflict — the doc changes here commit cleanly on top.
+
+=== 2026-09-09 (Part 12) — COMMIT DATA FILES FOR STREAMLIT CLOUD + DAILY AUTO-PUSH ===
+TASK: Let Streamlit Community Cloud (which deploys from the GitHub repo) read the prediction
+and model files, and auto-publish fresh predictions every morning.
+PURPOSE: The hosted app has no local data/ dir — it needs the parquet/pkl files in the repo.
+
+.gitignore: `data/processed/` and `data/models/` were dir-excludes (trailing slash), so
+`!`-negations for children could never re-include them. Switched both to `/*` form, then added
+explicit allow lines:
+  !data/processed/todays_yrfi_predictions.parquet
+  !data/processed/pitcher_nrfi_profile.parquet
+  !data/processed/top5_batter_stats.parquet
+  !data/processed/projected_top5_by_team.parquet
+  !data/processed/probable_pitchers.parquet
+  !data/models/yrfi_model.pkl
+Everything else under data/ (yrfi_outcomes, active_rosters, game_meta, game_weather, all of
+data/raw, data/odds, data/archive, yrfi_model_meta.json, feature_importance.csv) stays excluded.
+Verified with `git check-ignore`. Committed the 6 files (yrfi_model.pkl = 22 MB, under GitHub's
+50 MB warn / 100 MB hard limit — no LFS needed) as "Add data files for Streamlit Cloud
+deployment" (83956b1).
+
+launch.sh: new Step 6.5 between predictions and Streamlit start —
+  git add todays_yrfi_predictions.parquet probable_pitchers.parquet
+  if staged changes: git commit -m "Daily predictions update $(date +%Y-%m-%d)" && git push
+Wrapped in `{ … } || log` with an `if git diff --cached --quiet` guard so an offline / auth /
+nothing-to-commit failure logs a WARNING and the dashboard still starts (launch.sh has `set -e`;
+`set -e` is suspended for the left side of a `||`). The other 4 committed data files only change
+on a full rebuild — commit them by hand after src/11/12/13.
+
+REMOTE CHURN: a parallel actor pushed aabaa9c (scripts), then 207ce44 (.devcontainer/) during
+this work. Rebased Part 12's commit onto 207ce44 and pushed cleanly.
+FILES CHANGED: .gitignore, launch.sh, claude-context.txt, claude-prompts.txt +
+data/processed/{todays_yrfi_predictions,pitcher_nrfi_profile,top5_batter_stats,
+projected_top5_by_team,probable_pitchers}.parquet, data/models/yrfi_model.pkl (now tracked).
