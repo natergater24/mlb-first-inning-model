@@ -2,6 +2,12 @@ I am continuing development of an MLB YRFI/NRFI betting pipeline. Read this enti
 
 Project location: ~/Desktop/Nathan/Claude/MLB_Pipeline
 
+=== GITHUB ===
+GitHub repository: https://github.com/natergater24/mlb-first-inning-model
+GitHub username: natergater24
+Visibility: Private
+To push changes: git add . && git commit -m "description" && git push
+
 === MAJOR PIVOT (2026-09-09) ===
 This project was previously a "first at-bat reach base" prediction pipeline. On 2026-09-09 it was
 completely repurposed to focus exclusively on YRFI/NRFI betting:
@@ -66,6 +72,12 @@ Kept & updated:
                           data/processed/batter_game_logs.parquet (one row per batter per game).
                           The daily flow still only caches TODAY's feeds — run src/backfill_feeds.py
                           to fill gaps before --build-lineup-history, else those tables go stale.
+                          UPDATED 2026-09-09: fetch_all_rosters_for_today() (the --rosters-only step)
+                          no longer depends on game_meta.parquet for today's team list — game_meta
+                          is only refreshed by a full src/02 run() so the daily flow left it weeks
+                          stale, which silently no-op'd the roster refresh (active_rosters.parquet
+                          was frozen at 2026-06-30, pre-trade-deadline). Now resolves today's teams
+                          from game_meta -> probable_pitchers.parquet -> schedule.parquet in order.
   03_fetch_weather.py   — REWRITTEN 2026-09-09. Was matching a team's abbreviation as a SUBSTRING
                           of the full team name to pick a stadium — silently missed 14 parks
                           (Rate Field/CWS, Yankee Stadium/NYY, Wrigley/CHC, Citi/NYM, Kauffman/KC,
@@ -340,6 +352,11 @@ Keep it strictly separated from the trained YRFI RandomForest + logistic surroga
     / xBA / bb% detail now; refresh src/01 when convenient.
   - schedule.parquet only holds 2026. src/03 also reads yrfi_outcomes.parquet so weather isn't
     limited by it, but 02_fetch_mlb_api.py should refresh schedule.parquet in the daily flow.
+  - game_meta.parquet is only rebuilt by a full src/02 run() — the --today-only daily flow never
+    adds today's rows, so it can sit weeks stale. The roster step now works around this (resolves
+    teams from probable_pitchers), but src/12's id2abbr map and other game_meta consumers would
+    still benefit from a lightweight daily game_meta refresh. Run a full src/02 (or backfill) to
+    bring game_meta current.
   - Consider point-in-time pitcher NRFI aggregates to remove the look-ahead bias in training.
   - Optional: switch calibration to sigmoid if isotonic plateaus stay too coarse.
   - FUTURE (own section above): per-pitch batted-ball model, shown alongside — not inside — the

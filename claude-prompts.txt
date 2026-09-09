@@ -781,3 +781,51 @@ BetMGM · DraftKings & FanDuel open their MLB lobby (no working instant link)".
 VERIFIED: yrfi_odds now has 60 instant deeplinks (MGM 30 + CZR 30), FD/DK 0. Dashboard: FD cells
 show plain odds (lobby ↗), MGM/CZR show ⚡.
 FILES CHANGED: src/04_fetch_odds.py, app.py, claude-context.txt, claude-prompts.txt.
+
+=== 2026-09-09 (Part 10) — SESSION RESUME: PIPELINE STATE CHECK + STALE-ROSTER FIX ===
+TASK: New session. Ran the full diagnostic, confirmed pipeline state, resumed from where the
+build left off, committed.
+PURPOSE: Verify nothing was left half-built after the GitHub push, then bring today's slate current.
+
+PIPELINE STATE (diagnostic 2026-09-09 16:38): ALL phases complete.
+  Phase 1 (archive) — done. Phase 2 (src/10-14 + yrfi_features + park_factors) — done, all
+  outputs present: yrfi_outcomes (27,408), pitcher_nrfi_profile (1,344), projected_top5_by_team
+  (30), top5_batter_stats (150), yrfi_model.pkl / feature_importance / meta, lineup_position_
+  history+summary. Phase 3 (app.py, 1,060 lines) — done, Streamlit was live on :8501.
+  todays_yrfi_predictions.parquet had 14 games for today. Nothing to build.
+
+ONE REAL GAP FOUND: data/processed/active_rosters.parquet was frozen at 2026-06-30 (pre-trade-
+deadline). Root cause: fetch_all_rosters_for_today() reads today's team list from
+game_meta.parquet, which is only rebuilt by a full src/02 run() — the --today-only daily flow
+never refreshes it, so game_meta had no rows for any date after 2026-06-30. The daily
+"[2/5] Active rosters" step therefore hit the "no games in game_meta for today" branch and
+silently kept the stale file ("done in 1s"). Downstream: src/12's projected top-5 could map
+traded batters to the wrong team.
+
+FIX (src/02_fetch_mlb_api.py, fetch_all_rosters_for_today): replaced the game_meta-only team
+lookup with a _today_team_pairs() helper that tries game_meta.parquet -> probable_pitchers.parquet
+-> schedule.parquet in order (probable_pitchers + schedule are refreshed every daily run and both
+carry home/away team ids + names). Logs which source resolved.
+
+RESUME RUN (all < 1 min, caffeinate, full py3.14 path):
+  src/02 --rosters-only  -> active_rosters 393 players / 28 teams, as_of 2026-09-09
+  src/12                  -> projected_top5_by_team (30/30 full 1-5), top5_batter_stats (150)
+  src/03 --today-only     -> weather refreshed (27,621 games)
+  src/04 --yrfi-only      -> yrfi_odds_2026-09-09.parquet, 80 book lines / 10 games (SGO),
+                             40 instant deeplinks (MGM+CZR), FD template ids dropped as designed
+  src/14                  -> todays_yrfi_predictions.parquet, 14 games, odds JOINED
+                             (recommended_bet: 9 NO EDGE / 4 NRFI / 1 YRFI)
+  Restarted Streamlit headless on :8501 (old PID 88754 killed). HTTP 200, no tracebacks.
+  Browser-verified: landing cards render with model odds, book-lines table (DK/FD/MGM/CZR
+  filled), edges, EV, recommended-bet badges; "updated 1 min ago" green.
+
+NOT DONE (still stale, documented in claude-context.txt OUTSTANDING — not in scope this session):
+  - game_meta.parquet still frozen at 2026-06-30 (needs a full src/02 run / backfill). The roster
+    step now works around it; src/12's id2abbr map still leans on it but has all 30 teams so it's
+    functional.
+  - batter_rolling.parquet stale at 2026-06-01 (src/01 refresh).
+  - lineup_position_summary current to 2026-09-08 (rebuilt earlier today).
+
+FILES CHANGED: src/02_fetch_mlb_api.py, claude-context.txt, claude-prompts.txt. Data rebuilt:
+active_rosters, projected_top5_by_team, top5_batter_stats, game_weather, yrfi_odds_2026-09-09,
+todays_yrfi_predictions.

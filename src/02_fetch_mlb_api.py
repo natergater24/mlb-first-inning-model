@@ -448,25 +448,40 @@ def fetch_all_rosters_for_today(today: str = None) -> pd.DataFrame:
             log.info("Active rosters already fetched today — using cache.")
             return existing
 
-    # Get today's teams from game_meta
-    meta_path = PROC_DIR / "game_meta.parquet"
-    if not meta_path.exists():
-        log.warning("game_meta.parquet not found — cannot determine today's teams.")
-        return pd.DataFrame()
+    # Determine today's teams. game_meta is only as fresh as the last full
+    # src/02 run(), so the daily flow can leave it weeks stale — fall back to
+    # probable_pitchers.parquet (refreshed every daily run) and then
+    # schedule.parquet before giving up.
+    def _today_team_pairs() -> list[tuple[int, str]]:
+        sources = [
+            (PROC_DIR / "game_meta.parquet",       "home_team_abbr", "away_team_abbr"),
+            (PROC_DIR / "probable_pitchers.parquet", "home_team_name", "away_team_name"),
+            (PROC_DIR / "schedule.parquet",          "home_team_name", "away_team_name"),
+        ]
+        for path, home_lbl, away_lbl in sources:
+            if not path.exists():
+                continue
+            d = pd.read_parquet(path)
+            if "game_date" not in d.columns:
+                continue
+            d = d[d["game_date"].astype(str).str.startswith(today)]
+            if d.empty or "home_team_id" not in d.columns:
+                continue
+            pairs = (
+                list(zip(d["home_team_id"].dropna().astype(int),
+                         d.get(home_lbl, d["home_team_id"]).astype(str).tolist())) +
+                list(zip(d["away_team_id"].dropna().astype(int),
+                         d.get(away_lbl, d["away_team_id"]).astype(str).tolist()))
+            )
+            if pairs:
+                log.info("Today's teams resolved from %s", path.name)
+                return pairs
+        return []
 
-    meta = pd.read_parquet(meta_path)
-    today_meta = meta[meta["game_date"].astype(str).str.startswith(today)]
-    if today_meta.empty:
-        log.warning("No games found in game_meta for %s", today)
+    team_pairs = _today_team_pairs()
+    if not team_pairs:
+        log.warning("No games found for %s in game_meta / probable_pitchers / schedule", today)
         return pd.DataFrame()
-
-    # Collect unique team IDs + names
-    team_pairs = (
-        list(zip(today_meta["home_team_id"].dropna().astype(int),
-                 today_meta.get("home_team_abbr", today_meta["home_team_id"]).tolist())) +
-        list(zip(today_meta["away_team_id"].dropna().astype(int),
-                 today_meta.get("away_team_abbr", today_meta["away_team_id"]).tolist()))
-    )
     seen = set()
     teams = []
     for tid, tname in team_pairs:
