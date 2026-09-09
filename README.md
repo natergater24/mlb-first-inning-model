@@ -10,6 +10,8 @@ A machine learning pipeline that predicts whether a run will be scored in the fi
 - Trains a RandomForest model to predict YRFI probability for each game
 - Compares model implied odds to sportsbook lines to identify edges
 - Displays predictions in a Streamlit dashboard
+- Tracks the bets you place (side, book, odds, units), auto-grades them from the MLB Stats API,
+  and shows a running W-L / units / dollars record at the top of the page
 
 ## Setup
 

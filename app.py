@@ -24,6 +24,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+import bet_tracker as bt
+
 ROOT = Path(__file__).resolve().parent
 PROC = ROOT / "data" / "processed"
 ODDS = ROOT / "data" / "odds"
@@ -639,6 +641,7 @@ def page_detail(pk: int, pred: pd.DataFrame):
     st.caption(f"{TODAY}  ·  {r.get('park_name','')}  ·  {wx}")
 
     section_prediction(r)
+    section_track_bet(r)
     section_weather_park(r)
     profiles = load_pitcher_profiles()
     last5 = load_last5()
@@ -1025,9 +1028,145 @@ def _alias_variants(abbr: str) -> list[str]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Bet tracker
+# ═══════════════════════════════════════════════════════════════════════════
+def _money(v) -> str:
+    v = float(v or 0)
+    return f"{'−' if v < 0 else '+'}${abs(v):,.0f}"
+
+
+def tracker_bar():
+    """Top-of-page bankroll tracker + bet log. Shown on every view."""
+    df = bt.load_bets()
+
+    # Auto-grade finished games once per browser session (button forces a recheck).
+    if not st.session_state.get("_bets_graded"):
+        df, n = bt.grade_open_bets(df)
+        st.session_state["_bets_graded"] = True
+        if n:
+            st.toast(f"Graded {n} bet{'s' if n != 1 else ''}")
+
+    unit_size = float(st.session_state.setdefault("unit_size", 100.0))
+    s = bt.tracker_stats(df, unit_size)
+    col = "#1a9850" if s["net_units"] > 0 else "#d73027" if s["net_units"] < 0 else "#555"
+
+    c1, c2, c3 = st.columns([3, 1, 1])
+    with c1:
+        st.markdown(
+            f"<div style='font-size:22px;font-weight:800;line-height:1.3'>"
+            f"📊 {s['wins']}-{s['losses']} "
+            f"<span style='color:{col}'>| {s['net_units']:+.1f} units | "
+            f"{_money(s['net_dollars'])}</span>"
+            f"<span style='font-size:13px;color:#888;font-weight:400'>"
+            f"  ·  {s['open']} open  ·  ROI {s['roi_pct']:+.1f}%</span></div>",
+            unsafe_allow_html=True)
+    with c2:
+        st.session_state["unit_size"] = st.number_input(
+            "$ / unit", min_value=1.0, value=unit_size, step=25.0,
+            label_visibility="collapsed")
+    with c3:
+        if st.button("↻ Grade bets", use_container_width=True):
+            _, n = bt.grade_open_bets()
+            st.toast(f"Graded {n} bet{'s' if n != 1 else ''}" if n
+                     else "No bets ready to grade yet")
+            st.rerun()
+
+    with st.expander(f"🧾 Bet log ({len(df)})"):
+        render_bet_log(df, ctx="log")
+        st.caption("Saved to `data/bet_log.csv` — published to the live site each "
+                   "morning by `launch.sh`. On the hosted site, log/edit bets from "
+                   "the local app; changes there won't survive the next redeploy.")
+    st.divider()
+
+
+def render_bet_log(df: pd.DataFrame, ctx: str = "log"):
+    if df.empty:
+        st.caption("No bets logged yet — open a game and use **Track a Bet**.")
+        return
+    for _, b in df.sort_values("placed_at", ascending=False).iterrows():
+        icon = {"won": "✅", "lost": "❌", "open": "🕗"}.get(str(b["status"]), "•")
+        line = (f"{icon} **{b['away_team']} @ {b['home_team']}** · {b['side']} "
+                f"`{bt.american_str(b['odds'])}` · {float(b['units']):g}u · {b['book']}")
+        if str(b["status"]) in ("won", "lost"):
+            ru = float(b["result_units"]) if pd.notna(b["result_units"]) else 0.0
+            fir = b.get("first_inn_runs")
+            line += f" · **{ru:+.2f}u** · 1st-inn runs: {fir}"
+        if bt.is_editable(b):
+            with st.expander(line):
+                _edit_bet_form(b, ctx)
+        else:
+            st.markdown(line)
+
+
+def _edit_bet_form(b: pd.Series, ctx: str = "log"):
+    real_id = str(b["bet_id"])
+    k = f"{ctx}_{real_id}"
+    c1, c2, c3, c4 = st.columns([1, 1.3, 1, 1])
+    side = c1.selectbox("Side", ["NRFI", "YRFI"],
+                        index=0 if str(b["side"]).upper() == "NRFI" else 1,
+                        key=f"eb_side_{k}")
+    book = c2.selectbox("Book", bt.BOOKS,
+                        index=bt.BOOKS.index(b["book"]) if b["book"] in bt.BOOKS
+                        else len(bt.BOOKS) - 1, key=f"eb_book_{k}")
+    odds = c3.number_input("Odds", value=float(b["odds"]), step=5.0,
+                           key=f"eb_odds_{k}")
+    units = c4.number_input("Units", min_value=0.0, value=float(b["units"]),
+                            step=0.5, key=f"eb_units_{k}")
+    s1, s2 = st.columns(2)
+    if s1.button("💾 Save", key=f"eb_save_{k}", use_container_width=True):
+        bt.update_bet(real_id, side=side.upper(), book=book,
+                      odds=float(odds), units=float(units))
+        st.toast("Bet updated")
+        st.rerun()
+    if s2.button("🗑 Delete", key=f"eb_del_{k}", use_container_width=True):
+        bt.delete_bet(real_id)
+        st.toast("Bet deleted")
+        st.rerun()
+
+
+def section_track_bet(r):
+    st.subheader("💰 Track a Bet")
+    pk = int(r["game_pk"])
+    rec = str(r.get("recommended_bet", "")).split()
+    default_side = rec[0] if rec and rec[0] in ("NRFI", "YRFI") else _better_value_side(r)
+
+    c1, c2, c3, c4 = st.columns([1, 1.3, 1, 1])
+    side = c1.selectbox("Side", ["NRFI", "YRFI"],
+                        index=0 if default_side == "NRFI" else 1, key=f"tb_side_{pk}")
+    book = c2.selectbox("Book", bt.BOOKS, key=f"tb_book_{pk}")
+    code = {v: k for k, v in bt.BOOK_CODE_TO_NAME.items()}.get(book)
+    try:
+        prefill = float(r.get(f"{side.lower()}_odds_{code}")) if code else 100.0
+    except (TypeError, ValueError):
+        prefill = 100.0
+    # key varies with side/book so the field re-prefills when either changes
+    odds = c3.number_input("Odds (American)", value=prefill, step=5.0,
+                           key=f"tb_odds_{pk}_{side}_{book}")
+    units = c4.number_input("Units", min_value=0.0, value=1.0, step=0.5,
+                            key=f"tb_units_{pk}")
+    if st.button("➕ Log this bet", key=f"tb_log_{pk}", type="primary"):
+        bt.add_bet(game_pk=pk, game_date=str(r.get("game_date", TODAY)),
+                   away_team=r["away_team"], home_team=r["home_team"],
+                   side=side, book=book, odds=float(odds), units=float(units))
+        st.session_state["_bets_graded"] = False
+        st.toast(f"Logged {side} {bt.american_str(odds)} · {units:g}u")
+        st.rerun()
+
+    mine = bt.load_bets()
+    if not mine.empty:
+        mine = mine[pd.to_numeric(mine["game_pk"], errors="coerce") == pk]
+    if not mine.empty:
+        st.caption("Bets on this game")
+        render_bet_log(mine, ctx=f"game{pk}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 def main():
     pred = load_predictions()
     meta = load_model_meta()
+
+    tracker_bar()
+
     if not pred.empty:
         weights = render_weight_controls(meta)
         pred = apply_weights(pred, weights)

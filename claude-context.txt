@@ -206,6 +206,8 @@ data/processed/
                                       (OBP/OPS/R/AB) + seas_r/seas_ops/seas_ab in src/12. Only as
                                       complete as the cached game feeds (run backfill_feeds first).
   todays_yrfi_predictions.parquet   — rebuilt every day; one row per game
+data/bet_log.csv                    — bet tracker log (one row per bet); tracked in git,
+                                      pushed by launch.sh Step 6.5. Managed by bet_tracker.py.
   lineup_position_summary.parquet   — KEPT (2026 season, ~650 players). Feeds src/12.
   lineup_position_history.parquet   — KEPT
   bvp_full_lifetime.parquet         — KEPT (career batter-vs-pitcher; no SLG column)
@@ -236,6 +238,23 @@ env.txt — ODDS_API_KEY, SGO_API_KEY (project uses env.txt not .env). git-ignor
   hardened, but the values remain in git history. ODDS_API_KEY / SGO_API_KEY / ALERT_EMAIL_
   PASSWORD must be rotated; scrub history (git filter-repo / BFG + force-push) or accept the
   exposure on the private repo.
+
+=== BET TRACKER (bet_tracker.py + app.py, added 2026-09-09 Part 14) ===
+bet_tracker.py — standalone (stdlib + requests + pandas): load_bets()/save_bets() (local
+data/bet_log.csv, LOCAL-FIRST — launch.sh Step 6.5 commits+pushes it so the hosted app matches;
+all storage behind these two fns so a GitHub-API write-back can be added later), add_bet /
+update_bet / delete_bet / is_editable (open AND now < game_start, start fetched from the MLB
+schedule API at log time), grade_open_bets (MLB Stats API linescore — 1st-inning runs; NRFI wins
+on 0, YRFI on >=1; only once the 1st is complete, or early if a run already scored; NO pushes),
+tracker_stats (W-L, net units, net $, ROI). result_units = units*payout on win, -units on loss.
+app.py: tracker_bar() at the very top of every view (main() calls it before render_weight_controls)
+= "W-L | +X units | +$X,XXX · N open · ROI" + $/unit box (session, default 100) + "Grade bets"
+button + "Bet log" expander (edit/delete inline for editable bets — keys namespaced by a ctx
+prefix so the same bet can render in the top log AND the per-game list without a
+StreamlitDuplicateElementKey). section_track_bet(r) between detail sections 1 and 2: side (default
+= recommended bet), book, odds (prefilled from that book's line, key varies with side/book so it
+re-prefills), units. Auto-grades once per browser session on load. Seed row: TOR@ATH 2026-09-09
+NRFI FanDuel +100 1u won -> tracker reads 1-0 | +1.0 units | +$100.
 
 === DASHBOARD (app.py) ===
 Completely rewritten 2026-09-09. Streamlit on localhost:8501. Single page, two views:

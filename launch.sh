@@ -65,9 +65,10 @@ echo "[$(date +'%H:%M:%S')] Step 6.5 — pushing fresh predictions to GitHub..."
 # Never let a git failure (offline, auth, nothing-to-commit) abort the launch.
 {
     git add data/processed/todays_yrfi_predictions.parquet \
-            data/processed/probable_pitchers.parquet
+            data/processed/probable_pitchers.parquet \
+            data/bet_log.csv
     if git diff --cached --quiet; then
-        echo "  no prediction changes to commit"
+        echo "  no prediction / bet-log changes to commit"
     else
         git commit -m "Daily predictions update $(date +%Y-%m-%d)" \
             && git push \

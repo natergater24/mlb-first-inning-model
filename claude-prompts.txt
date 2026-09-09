@@ -931,3 +931,53 @@ DOCS (the actual ask):
   - claude-context.txt: env.txt line expanded with the ignore patterns + the security note.
 FILES CHANGED: .gitignore, README.md, USER_MANUAL.md, claude-context.txt, claude-prompts.txt;
 `env copy.txt` untracked.
+
+=== 2026-09-09 (Part 14) — BET TRACKER ===
+TASK: Track placed bets (side / book / odds / units), auto-grade them, show a running
+record at the top of the dashboard. Ship local-first.
+BRAINSTORM: classified bounded; user chose local-first persistence, MLB-API grading, no
+pushes for 1st-inning bets, tracker format "W-L | +X units | +$X,XXX".
+
+NEW FILE bet_tracker.py (stdlib + requests + pandas, import-safe on Streamlit Cloud):
+  - load_bets()/save_bets() -> data/bet_log.csv on the local filesystem. All storage behind
+    these two functions so a GitHub-API write-back is a one-function swap later.
+  - add_bet / update_bet / delete_bet / is_editable (open AND now < game_start; start pulled
+    from statsapi schedule at log time).
+  - grade_open_bets(): statsapi /game/{pk}/linescore -> total 1st-inning runs. NRFI wins on 0,
+    YRFI on >=1. Grades only once the 1st inning is complete (currentInning>1 or inningState
+    "End"), or early if a run already scored. No pushes. result_units = units*payout | -units.
+  - tracker_stats(): wins, losses, open, net_units, net_dollars (net_units * $/unit), roi_pct.
+  - profit_multiple(): American -> unit profit multiple. american_str(): +100 / -115.
+
+app.py:
+  - import bet_tracker as bt.
+  - tracker_bar() rendered at the very top of every view (main() calls it before
+    render_weight_controls): "W-L | +units | +$" + N open + ROI, a $/unit number_input
+    (session_state, default 100), a "Grade bets" button, and a "Bet log" expander.
+    Auto-grades once per browser session on load (st.session_state["_bets_graded"]).
+  - render_bet_log(df, ctx): per-bet line; editable bets (bt.is_editable) get an inline
+    expander with side/book/odds/units + Save/Delete. Widget keys namespaced by `ctx` so the
+    same bet rendering in BOTH the top log and the per-game list doesn't raise
+    StreamlitDuplicateElementKey (hit this in testing, fixed).
+  - section_track_bet(r) inserted in page_detail() between section_prediction and
+    section_weather_park: Side (default = recommended_bet), Book (DK default), Odds
+    (prefilled from r[f"{side}_odds_{code}"], key varies with side/book to re-prefill),
+    Units (default 1) -> "Log this bet". Lists existing bets on that game below.
+
+launch.sh: Step 6.5 `git add` list gains data/bet_log.csv.
+.gitignore: explicit `!data/bet_log.csv` note (data/ has no blanket ignore, so informational).
+data/bet_log.csv: seeded with the requested test row — game_pk 824956 (TOR@ATH, 2026-09-09),
+NRFI, FanDuel, +100, 1u, status won, result_units +1.0. Verified live: game 824956 was Final
+with 0 first-inning runs, so the seed matches reality.
+
+VERIFIED in-browser end to end: tracker shows "1-0 | +1.0 units | +$100"; logged a YRFI -120
+DraftKings bet on AZ@KC from the detail view (odds auto-prefilled), it appeared in both the top
+Bet log and "Bets on this game" with no duplicate-key error, edited + deleted it inline;
+auto-grading marked a test WSH@SD YRFI bet "lost" (0 first-inning runs). Streamlit log clean.
+Seed file restored to the single row before deploy.
+
+DEPLOY: committed + pushed to GitHub -> Streamlit Cloud redeploys. Bet writes on the hosted
+site are session-only (ephemeral FS) with a caption saying so; the local app is the source of
+truth and launch.sh publishes it each morning.
+FILES CHANGED: bet_tracker.py (new), app.py, launch.sh, .gitignore, data/bet_log.csv (new),
+README.md, USER_MANUAL.md, claude-context.txt, claude-prompts.txt.

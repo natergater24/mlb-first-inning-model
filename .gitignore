@@ -28,6 +28,10 @@ data/archive/
 !data/processed/probable_pitchers.parquet
 !data/models/yrfi_model.pkl
 
+# Bet tracker log — committed so the hosted app shows history (data/ has no
+# blanket ignore rule, so this line is just to keep it explicit)
+!data/bet_log.csv
+
 # Python
 __pycache__/
 *.py[cod]

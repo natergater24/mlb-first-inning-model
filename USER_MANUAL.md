@@ -155,11 +155,39 @@ Single page, two views.
   table DK/FD/MGM/CZR with ⚡/↗ links (right); recommended-bet badge + edge% +
   EV/$100 + "View details →".
 
-**Detail view (7 sections):** model summary + book table · weather/park (with the
-HR-factor explainer) · away pitcher profile · home pitcher profile · away team
-projected top-5 vs pitcher · home team projected top-5 · historical YRFI context.
+**Detail view (7 sections + Track a Bet):** model summary + book table, then
+**Track a Bet**, then weather/park (with the HR-factor explainer) · away pitcher
+profile · home pitcher profile · away team projected top-5 vs pitcher · home team
+projected top-5 · historical YRFI context.
 
 Sidebar shows model test AUC / Brier / ECE / accuracy and the caveats.
+
+---
+
+## Bet Tracker
+
+**Top of every page:** `W-L | +X units | +$X,XXX` · open bets · ROI, a `$ / unit`
+box (default 100, per session), and a **Grade bets** button. The **Bet log**
+expander lists every bet; ungraded bets whose game has not started can be edited
+(side / book / odds / units) or deleted inline.
+
+**Logging a bet:** open a game -> **Track a Bet**. Side defaults to the
+recommended bet, book to DraftKings, odds pre-fill from that book's line for that
+side (editable), units default to 1. **Log this bet**.
+
+**Grading is automatic** — `bet_tracker.py` reads the 1st-inning runs from the
+MLB Stats API linescore (`statsapi.mlb.com/api/v1/game/{pk}/linescore`, free,
+keyless — the same source `src/10` uses). NRFI wins on 0 first-inning runs, YRFI
+on >= 1. It runs once per browser session on load and on the **Grade bets**
+button. First-inning bets never push. `result_units` = `units x odds payout` on a
+win, `-units` on a loss.
+
+**Storage:** `data/bet_log.csv` in the repo, read/written on the local
+filesystem. `launch.sh` Step 6.5 commits + pushes it every morning so the hosted
+site shows the same history. **Log and edit bets from the local app** — on the
+hosted site a change saves for that session only and is lost on the next
+redeploy. (`bet_tracker.load_bets()` / `save_bets()` isolate storage, so a
+GitHub-API write-back can be switched on later without touching `app.py`.)
 
 ---
 
@@ -224,6 +252,7 @@ committed to the repo (everything else under `data/` stays git-ignored):
 | `data/processed/projected_top5_by_team.parquet` | full rebuild only |
 | `data/processed/todays_yrfi_predictions.parquet` | **daily — auto** (launch.sh Step 6.5) |
 | `data/processed/probable_pitchers.parquet` | **daily — auto** (launch.sh Step 6.5) |
+| `data/bet_log.csv` | **on every bet + daily — auto** (launch.sh Step 6.5) |
 
 `launch.sh` Step 6.5 runs `git add` → `git commit -m "Daily predictions update
 <date>"` → `git push` for the two daily files after inference; Streamlit Cloud
@@ -253,7 +282,8 @@ src/               numbered pipeline scripts (01–05 legacy/support, 10–14 YR
   fetch_inn1_statcast.py   inning-1-only Statcast downloader (resumable)
   backfill_feeds.py   downloads missing completed game feeds
   archive/            pre-pivot model scripts (06–09)
-app.py             Streamlit dashboard
+app.py             Streamlit dashboard (predictions + bet tracker)
+bet_tracker.py     bet log I/O, MLB-API grading, bankroll stats
 run_pipeline.py    daily / full pipeline runner
 launch.sh          clear stale files → daily sequence → push predictions → restart Streamlit → Chrome
 scripts/           LaunchAgent shell wrappers
@@ -264,6 +294,7 @@ data/              mostly untracked (rebuild locally); a 6-file runtime subset i
   odds/             yrfi_odds_{date}.parquet
   models/           yrfi_model.pkl (tracked), feature_importance.csv, model_meta.json
   archive/          pre-pivot processed files + models
+  bet_log.csv       bet tracker log (tracked)
 claude-context.txt   full project briefing (read first)
 claude-prompts.txt   dated task log
 ```
