@@ -636,23 +636,36 @@ def _log_bet_form_compact(r, key_prefix: str):
         f"{r.get('away_pitcher_name') or 'TBD'} vs {r.get('home_pitcher_name') or 'TBD'} · "
         f"Model NRFI {nrfi_pct} / {nrfi_odds}")
 
+    unit_size = float(st.session_state.get("unit_size", bt.DEFAULT_UNIT_SIZE))
+
     c1, c2, c3, c4, c5 = st.columns([1, 1.3, 1.1, 1, 1])
     side = c1.selectbox("Bet type", ["YRFI", "NRFI"], key=f"{key_prefix}_side")
     book = c2.selectbox("Book", bt.BOOKS, key=f"{key_prefix}_book")
     odds_str = c3.text_input("Odds (American)", placeholder="+140", key=f"{key_prefix}_odds")
-    stake = c4.number_input("Stake ($)", min_value=0.0, value=10.0, step=5.0,
-                            key=f"{key_prefix}_stake")
+    stake_units = c4.number_input("Stake (units)", min_value=0.0, value=1.0, step=0.5,
+                                  key=f"{key_prefix}_stake")
     c5.write("")
-    if c5.button("Log Bet", key=f"{key_prefix}_log", use_container_width=True):
-        try:
-            odds_val = float(odds_str)
-        except (TypeError, ValueError):
+    log_clicked = c5.button("Log Bet", key=f"{key_prefix}_log", use_container_width=True)
+
+    try:
+        odds_val = float(odds_str)
+    except (TypeError, ValueError):
+        odds_val = None
+
+    total_dollars = stake_units * unit_size
+    win_note = (f"potential win **${stake_units * unit_size * bt.profit_multiple(odds_val):,.2f}**"
+                if odds_val is not None else "enter odds to see potential win")
+    st.caption(f"{stake_units:g}u @ \\${unit_size:g}/unit = **\\${total_dollars:,.2f}**  ·  "
+               f"{win_note}")
+
+    if log_clicked:
+        if odds_val is None:
             st.warning("Enter valid American odds, e.g. +140 or -140")
         else:
             try:
                 bt.add_bet(game_pk=pk, game_date=str(r.get("game_date", TODAY)),
                            away_team=away, home_team=home, side=side, book=book,
-                           odds=odds_val, units=1.0, unit_size=float(stake))
+                           odds=odds_val, units=float(stake_units), unit_size=unit_size)
                 st.session_state["_bets_graded"] = False
                 st.toast("✅ Bet logged")
                 st.rerun()

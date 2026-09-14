@@ -250,6 +250,14 @@ tracker_stats (W-L, net units, net $, ROI), record_by_book (per-book W-L / units
 current_unit_size (most recent bet's size, else DEFAULT_UNIT_SIZE=25). result_units = units*payout
 on win, -units on loss. DYNAMIC $ ACCOUNTING: each bet row stores unit_size (dollars/unit at log
 time, frozen); net $ = Σ result_units_i * unit_size_i, so changing $/unit only affects new bets.
+UPDATED 2026-09-14: load_bets()/save_bets() no longer crash on a bet_log.csv access failure
+(e.g. macOS Full Disk Access not granted to Terminal for the Desktop-nested project path — file
+Unix perms were already correct at 644, this is a TCC sandboxing issue, not chmod-fixable).
+Empty (0-byte) file now returns an empty COLUMNS frame instead of raising EmptyDataError.
+PermissionError is caught and re-raised as bt.BetLogAccessError with a user-facing message;
+app.py catches it at every call site (tracker_bar, grade-bets button, bet edit/delete,
+add-bet, per-game bet list) and shows st.warning + falls back to an empty frame instead of
+crashing the whole page.
 app.py: tracker_bar() at the very top of every view (main() calls it before render_weight_controls)
 = prominent "W-L | +Xu | +$X,XXX" (26px) + small "combined record · N open · ROI" line, a
 "$ / unit (new bets)" box (default = current_unit_size, i.e. $25), a "Grade bets" button, a
@@ -303,6 +311,28 @@ LANDING (game list):
     EV/$100 · "best {Book} {odds}⚡/↗" · "View details →".
     When ⚙️ custom weights are active the MIDDLE block header reads "⚙️ YOUR WEIGHTING" and each
     row shows "(model X%)".
+  UPDATED 2026-09-14: every card has a collapsed "➕ Log a Bet" expander at the bottom
+    (key=f"bet_exp_{pk}", one per game_pk so cards expand independently). Expanding it runs
+    _log_bet_form_compact(r, key_prefix=f"land_{pk}") — a single-row form (Bet type YRFI/NRFI,
+    Book from bt.BOOKS, "Odds (American)" text input, "Stake (units)" number input default 1.0
+    step 0.5, "Log Bet" button) under a caption auto-showing game/date/pitchers/model NRFI
+    %+odds pulled from the row. UPDATED again same day: stake is UNITS, not dollars — a second
+    caption line live-computes "{stake}u @ ${unit_size}/unit = ${total}" (unit_size read from
+    st.session_state["unit_size"], the same $/unit box at the top of the landing page used by
+    the rest of the tracker) and "potential win ${...}" via bt.profit_multiple(odds) * stake *
+    unit_size, both recomputed on every keystroke/selection before the button is even clicked.
+    add_bet(..., units=stake, unit_size=current $/unit) — same accounting convention as the
+    detail-view form (bet's dollar value freezes at the $/unit in effect when logged). Success
+    uses st.toast (existing app convention) rather than a bespoke timer. This is IN ADDITION to
+    the unit-based section_track_bet() form in the detail view, which is unchanged.
+    bt.BOOKS extended to ["DraftKings","FanDuel","BetMGM","Caesars","PointsBet","BetOnline","Other"]
+    (was missing PointsBet/BetOnline) — used by both forms.
+  ODDS FORMAT NOTE (2026-09-14): odds were already American everywhere before this session — every
+    display already routes through fmt_odds()/american_odds(), and 04_fetch_odds.py fetches with
+    oddsFormat=american end to end (SGO + The Odds API). No decimal odds existed anywhere to
+    convert. Applied only the remaining legitimate ask: explicit "(American)" labeling — game-card
+    "MODEL (AMERICAN)" / "BOOK LINES (AMERICAN)" headers, section_prediction's "Model NRFI/YRFI
+    (American):" labels and "NRFI (American)"/"YRFI (American)" table columns.
   Detail view Section 1 also has a row of side-aware betslip buttons "⚡/↗ {Book} {SIDE} {odds}"
   for the recommended/better-value side + a "⚡ Add {SIDE} to {Book} betslip" button under the
   Best Bet box (only when that book's link is a real deeplink).

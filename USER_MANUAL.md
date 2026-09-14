@@ -183,6 +183,16 @@ recommended bet, book to DraftKings, odds pre-fill from that book's line for tha
 side (editable), **units staked** default to 1 (the caption shows the dollar
 equivalent). **Log this bet**.
 
+**Or log directly from the landing page** — every game card has a collapsed
+**➕ Log a Bet** section at the bottom (no need to open the game). It shows the
+matchup, pitchers and the model's NRFI read for context, then a compact row:
+bet type, book, **odds (American, type it in — e.g. `+140` or `-140`)**, and
+**stake in units** (default 1, same units convention as the detail-view form).
+A line under the row updates live as you type: `{units}u @ ${$/unit} = ${total}`
+plus a **potential win** figure computed from the odds you entered. **Log Bet**
+saves it (uses the same `$ / unit` box at the top of the page) and a toast
+confirms it.
+
 **Grading is automatic** — `bet_tracker.py` reads the 1st-inning runs from the
 MLB Stats API linescore (`statsapi.mlb.com/api/v1/game/{pk}/linescore`, free,
 keyless — the same source `src/10` uses). NRFI wins on 0 first-inning runs, YRFI

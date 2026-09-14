@@ -1017,3 +1017,118 @@ In-browser: tracker bar shows "1-0 | +1.0u | +$25", "Record by sportsbook" shows
 DEPLOY: committed + pushed (caffeinate on the streamlit runs).
 FILES CHANGED: bet_tracker.py, app.py, data/bet_log.csv, README.md (n/c this part), USER_MANUAL.md,
 claude-context.txt, claude-prompts.txt.
+
+=== 2026-09-14 ===
+TASK: Fix PermissionError crash reading data/bet_log.csv
+PURPOSE: App was crashing with a PermissionError when bet_tracker.py tried to read
+data/bet_log.csv (path nested under ~/Desktop, a macOS TCC-protected location).
+ROOT CAUSE INVESTIGATION: Checked file + dir Unix permissions first — bet_log.csv was already
+644, owned by nathantessler, data/ dir 755. Unix permissions were never the problem, so chmod
+does nothing here. The real cause is that reading/writing under Desktop requires the calling
+process (Terminal/Python) to have macOS Full Disk Access — a TCC sandboxing check, not a
+filesystem permission bit. Separately, load_bets()/save_bets() in bet_tracker.py had no
+try/except at all, so any PermissionError (or an EmptyDataError from a 0-byte file) propagated
+straight up and crashed the whole Streamlit page.
+FIX:
+- bet_tracker.py: added BetLogAccessError exception. load_bets() now catches
+  pandas.errors.EmptyDataError (0-byte file -> empty COLUMNS frame) and PermissionError
+  (re-raised as BetLogAccessError with a Full-Disk-Access message). save_bets() catches
+  PermissionError the same way. bet_tracker.py stays dependency-free of Streamlit (per its
+  "standalone" design) — it raises, it doesn't render.
+- app.py: every call site that touches the bet log (tracker_bar's load + auto-grade, the
+  "Grade bets" button, bet edit/delete, add-bet, per-game bet list) now wraps the call in
+  try/except bt.BetLogAccessError and shows st.warning(str(e)) + falls back to an empty
+  DataFrame instead of crashing.
+VERIFIED: py_compile clean on both files; a standalone script simulating (a) missing file,
+(b) empty file, (c) a monkeypatched PermissionError on pd.read_csv all returned/raised as
+expected without crashing. Restarted Streamlit (caffeinate + --server.headless true, matching
+launch.sh's own restart convention) — came up clean on :8501, no errors in logs/streamlit.log.
+NOTE FOR USER: if a PermissionError still appears (as a graceful st.warning now, not a crash),
+it means Terminal itself lacks Full Disk Access — go to System Settings → Privacy & Security →
+Full Disk Access, add Terminal, toggle it on, then quit and reopen Terminal before relaunching.
+FILES CHANGED: bet_tracker.py, app.py, claude-context.txt, claude-prompts.txt.
+DEPLOY: committed (bet_tracker.py + app.py only — left the unrelated daily-pipeline parquet
+diffs untouched) and pushed to origin/main (9325d5c).
+
+=== 2026-09-14 (Part 2) — INLINE BET LOGGING ON LANDING PAGE + AMERICAN ODDS AUDIT ===
+TASK: (1) let users log a bet directly from a landing-page game card, no click-through to detail
+view required. (2) convert all odds display throughout the app to American format.
+
+CHANGE 1 — inline bet logger on landing cards:
+Read game_card() and section_track_bet() first. game_card() now ends with a per-card
+st.expander("➕ Log a Bet", key=f"bet_exp_{pk}") wrapping a new _log_bet_form_compact(r,
+key_prefix). Compact single-row form: Bet type (YRFI/NRFI dropdown), Book (bt.BOOKS dropdown),
+"Odds (American)" text input (placeholder +140, parsed with float() — "+140"/"-140" both parse
+fine), "Stake ($)" number input (default 10.0), "Log Bet" button. A caption above the row
+auto-shows away@home, game_date, both pitcher names, and "Model NRFI {pct} / {american odds}" —
+all read straight off the row, none of it editable. Stake maps to bt.add_bet(units=1.0,
+unit_size=stake) so that single bet's own $ accounting is exactly the stake entered, independent
+of the global "$/unit" box used by the older units-based detail-view form. Success feedback is
+st.toast("✅ Bet logged") + st.rerun() — matched the existing convention (grade-bets button,
+edit/delete already use st.toast) instead of inventing a session-state timer for a "message that
+disappears after 3s"; Streamlit toasts already auto-dismiss and survive the immediate rerun.
+Detail-view section_track_bet() untouched — still the units-based form, still works.
+bt.BOOKS (bet_tracker.py) extended from [DraftKings, FanDuel, BetMGM, Caesars, Other] to add
+PointsBet and BetOnline per the new dropdown spec — shared by both forms.
+
+CHANGE 2 — American odds audit:
+Investigated before writing anything (systematic-debugging: verify the premise before fixing).
+Grepped app.py for every odds-producing code path: ALL of them already route through fmt_odds()
+(game cards, section_prediction table + betslip buttons, best-bet callout) or american_odds()
+(model probability -> American odds). bet_tracker.py's own american_str() does the same for the
+bet log. src/04_fetch_odds.py fetches with oddsFormat=american from both SportsGameOdds and The
+Odds API — decimal odds never enter the pipeline. Repo-wide grep for decimal-odds-shaped literals
+found nothing. Conclusion: there was nothing to convert — the requested format_american_odds()/
+format_american_from_decimal() functions would have been dead code duplicating fmt_odds()/
+american_odds() exactly, so they were NOT added (avoids two odds formatters diverging over time).
+Applied the remaining legitimate part of the ask — explicit "(American)" labeling so it's never
+ambiguous: game_card "MODEL" -> "MODEL (AMERICAN)", "⚙️ YOUR WEIGHTING" -> "⚙️ YOUR WEIGHTING
+(AMERICAN)", "BOOK LINES" -> "BOOK LINES (AMERICAN)"; section_prediction "Model NRFI odds:" ->
+"Model NRFI (American):" (same for YRFI); table columns "NRFI Odds"/"YRFI Odds" -> "NRFI
+(American)"/"YRFI (American)". +/- signs were already always shown by fmt_odds()/american_str().
+
+TESTING: restarted Streamlit (caffeinate + --server.headless true, matching launch.sh), verified
+in-browser via claude-in-chrome. Logged both requested test bets through the new landing-page
+form: CWS@CLE NRFI DraftKings -138 $25, and SF@STL YRFI FanDuel +118 $15. Confirmed both appeared
+in the Bet log expander with correct American odds and independent per-card expander state (each
+card defaults fresh — proves the key=f"bet_exp_{pk}" uniqueness works). Printed bet_log.csv to
+confirm the two rows saved with odds=-138.0/118.0, unit_size=25.0/15.0, units=1.0. Restored
+bet_log.csv to the single seed row before committing (same convention as Part 14 — test bets are
+for verification, not meant to land in the real log) and confirmed the already-running Streamlit
+process's mtime was newer than the last code edit, so no extra restart was needed before testing.
+FILES CHANGED: app.py, bet_tracker.py, claude-context.txt, claude-prompts.txt.
+DEPLOY: committed app.py + bet_tracker.py only (data/bet_log.csv restored, not committed) and
+pushed to origin/main (704cbc6).
+
+=== 2026-09-14 (Part 3) — LANDING BET FORM: UNITS INSTEAD OF $, LIVE TOTAL + POTENTIAL WIN ===
+TASK: follow-up to Part 2's inline landing-page bet form. Feedback: Stake should be entered in
+units (consistent with the rest of the tracker), not raw dollars; the form should separately
+auto-show the total $ (derived from the $/unit box at the top of the landing page) and a
+potential-winnings $ figure computed from odds + stake.
+
+_log_bet_form_compact() (app.py) changes:
+  - "Stake ($)" number_input (default $10) replaced with "Stake (units)" (default 1.0, step 0.5)
+    — matches the detail-view form's units convention.
+  - unit_size = st.session_state.get("unit_size", bt.DEFAULT_UNIT_SIZE) read at the top of the
+    function (same session value the tracker_bar $/unit box writes/reads).
+  - New caption under the input row, recomputed live every rerun (before Log Bet is even
+    clicked): "{stake:g}u @ ${unit_size:g}/unit = ${total:,.2f}  ·  potential win ${win:,.2f}"
+    (or "enter odds to see potential win" while the odds field is blank/invalid). total =
+    stake * unit_size. win = stake * unit_size * bt.profit_multiple(odds) — reused the existing
+    profit_multiple() helper rather than re-deriving American-odds payout math.
+  - add_bet(..., units=stake, unit_size=unit_size) — now stores the actual units entered and the
+    live $/unit, same accounting convention as the detail-view form (previously this landing
+    form had stake=dollars mapped to units=1.0/unit_size=stake, which is now superseded).
+
+VERIFIED in-browser (claude-in-chrome): expanded CWS@CLE's Log a Bet card, confirmed default
+"1.00" units shows "1u @ $25/unit = $25.00"; typed +140 odds -> "potential win $35.00"
+(25*1.40, correct); changed stake to 2u -> "2u @ $25/unit = $50.00 · potential win $70.00"
+(50*1.40, correct) confirming the live recompute reacts to both odds and stake changes. Did NOT
+click Log Bet — user is logging the real bets themselves; confirmed data/bet_log.csv still holds
+only the original seed row (no test bets left behind from Part 2 either — already restored then).
+Restarted Streamlit to pick up the change; note the old process from Part 2 had to be killed by
+PID (`kill <pid>`) rather than pkill -f "streamlit run app.py", since the running command line
+uses the full absolute path to app.py and that pattern doesn't substring-match it — worth
+remembering for future restarts in this project.
+FILES CHANGED: app.py, claude-context.txt, claude-prompts.txt.
+DEPLOY: committed app.py and pushed to origin/main.
