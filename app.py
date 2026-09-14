@@ -15,6 +15,7 @@ Run:  /Library/Frameworks/Python.framework/Versions/3.14/bin/streamlit run app.p
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,33 @@ ROOT = Path(__file__).resolve().parent
 PROC = ROOT / "data" / "processed"
 ODDS = ROOT / "data" / "odds"
 MODELS = ROOT / "data" / "models"
+
+
+def _load_cloud_secrets_into_env():
+    """Streamlit Cloud secrets live in st.secrets, not os.environ -- and Streamlit
+    only mirrors flat secrets.toml keys into os.environ the first time st.secrets is
+    actually accessed. Nothing else in this app touches st.secrets, so without this,
+    ODDS_API_KEY/SGO_API_KEY configured in Cloud's Secrets panel never reach the
+    subprocess.run() calls in run_refresh() (which spawn src/04_fetch_odds.py, a
+    plain script that reads keys via python-dotenv + os.getenv). Walks one level of
+    TOML nesting too, in case a key was entered under a [section]. No-ops locally
+    where there's no secrets.toml (env.txt + load_dotenv already covers that path);
+    setdefault so a locally-set env var always wins over a same-named secret.
+    """
+    try:
+        secrets = st.secrets
+        for k, v in secrets.items():
+            if isinstance(v, str):
+                os.environ.setdefault(k, v)
+            elif hasattr(v, "items"):
+                for k2, v2 in v.items():
+                    if isinstance(v2, str):
+                        os.environ.setdefault(k2, v2)
+    except Exception:
+        pass
+
+
+_load_cloud_secrets_into_env()
 
 st.set_page_config(page_title="YRFI / NRFI Predictions", page_icon="⚾", layout="wide")
 

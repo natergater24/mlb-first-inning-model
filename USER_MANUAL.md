@@ -256,6 +256,16 @@ tail -50 logs/launchagent.log     # scheduled jobs
 committed. If a real key ever lands in a commit, rotate it: it stays in git
 history even after the file is removed.
 
+**On Streamlit Community Cloud, `env.txt` doesn't exist** — add `SGO_API_KEY` /
+`ODDS_API_KEY` as flat (not nested under a `[section]`) entries in the app's
+*Settings → Secrets* instead. Fixed 2026-09-14: this alone used to still leave
+book lines blank on the hosted app, even with the keys correctly set — Streamlit
+only copies `secrets.toml` into `os.environ` the first time `st.secrets` is
+accessed, and nothing did that anywhere in this app (the odds/pipeline scripts
+run as subprocesses reading `os.getenv`, not `st.secrets`, directly). `app.py`
+now forces that mirroring at startup (`_load_cloud_secrets_into_env()`), so
+Cloud secrets actually reach the pipeline subprocesses `run_refresh()` spawns.
+
 ---
 
 ## Deploying to Streamlit Community Cloud

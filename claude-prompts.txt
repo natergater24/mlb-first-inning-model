@@ -1212,3 +1212,50 @@ FILES CHANGED: src/14_build_todays_yrfi.py, .gitignore, data/processed/bvp_full_
 (newly tracked), README.md, USER_MANUAL.md, claude-context.txt, claude-prompts.txt.
 DEPLOY: committed and pushed to origin/main so Streamlit Community Cloud redeploys with both the
 code fix and the actual data file.
+
+=== 2026-09-14 (Part 6) — FIX: hosted book lines still blank even with Cloud Secrets set ===
+TASK: after Part 4/5's fixes, "Refresh slate" ran clean end to end on Streamlit Cloud, but the
+book-lines table (DK/FD/MGM/CZR) was empty for every game. Initial hypothesis was that
+ODDS_API_KEY/SGO_API_KEY simply weren't configured in Cloud at all (env.txt is correctly
+git-ignored, so the hosted container has no keys unless set separately) — user confirmed both
+keys ARE already present in the app's Streamlit Cloud Secrets panel, ruling that out and pointing
+to something else.
+
+ROOT CAUSE INVESTIGATION (did not guess a second time — verified structurally): grepped the
+entire codebase for `st.secrets` — zero matches anywhere. Streamlit's documented behavior: a
+secrets.toml value is only mirrored into os.environ the first time something in the running app
+actually accesses st.secrets (this triggers Streamlit's lazy secrets-loading, which is what
+performs the os.environ mirroring as a side effect); it is NOT automatic just because a secret
+exists in the Cloud panel. Since nothing in app.py/bet_tracker.py/src/*.py ever touches
+`st.secrets`, that mirroring never fires — so even correctly-configured Cloud secrets sit unused,
+and run_refresh()'s subprocess.run() (which spawns src/04_fetch_odds.py, a plain script reading
+keys via python-dotenv + os.getenv) inherits an environment that still lacks both keys. This
+produces the IDENTICAL silent-empty-odds symptom as the keys being completely unset — which is
+why the first (env.txt-missing) hypothesis looked so plausible before the user ruled it out.
+Also flagged two other possible contributors the user should independently check via Cloud's
+"Manage app" logs, since these aren't things a code fix can address: (a) secrets entered under a
+`[section]` in the TOML editor (still "nested", same underlying gap, though the fix below handles
+one level of that automatically), (b) the ODDS_API_KEY/SGO_API_KEY values in Cloud Secrets being
+stale/pre-rotation copies of the ones flagged exposed in git history back in Part 13 — would
+surface as 401s in the logs specifically, distinguishable from "key never arrived at all."
+
+FIX (app.py): added _load_cloud_secrets_into_env(), called once at module import time right after
+ROOT/PROC/ODDS/MODELS are defined. Walks st.secrets (a Mapping-like object) one level deep to
+also catch keys entered under a `[section]`, and os.environ.setdefault()'s every string value
+found — setdefault so a locally-set env var (from env.txt/load_dotenv) always wins over a
+same-named secret, never the reverse. Wrapped in try/except Exception so it's a clean no-op
+locally, where there's no secrets.toml at all (raises StreamlitSecretNotFoundError, caught).
+
+VERIFIED directly (not by deploying blind): wrote a temp .streamlit/secrets.toml with a flat
+`ODDS_API_KEY = "..."` line, called the mirror function standalone -> os.environ populated
+correctly. Repeated with the same key nested under `[api_keys]` -> still populated correctly via
+the one-level-nested walk. Removed secrets.toml entirely (the normal local state) -> function
+caught the expected exception and no-op'd cleanly, confirmed no key ended up in os.environ.
+Deleted the temp secrets.toml before finishing (never committed — would have been ignored anyway
+since .streamlit/secrets.toml is in .gitignore's Streamlit block). py_compile clean. Restarted
+local Streamlit (killed by PID, not pkill -f, per the standing note from Part 3/4) — clean
+startup, no errors in logs/streamlit.log; data/bet_log.csv confirmed untouched throughout.
+FILES CHANGED: app.py, README.md, USER_MANUAL.md, claude-context.txt, claude-prompts.txt.
+DEPLOY: committed and pushed to origin/main so Streamlit Community Cloud redeploys with the fix.
+Told the user to also spot-check Cloud's "Manage app" logs for any 401s around the odds step, in
+case the key-rotation angle (b above) is ALSO a factor alongside the propagation bug.

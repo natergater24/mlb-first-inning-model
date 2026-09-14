@@ -238,6 +238,24 @@ env.txt — ODDS_API_KEY, SGO_API_KEY (project uses env.txt not .env). git-ignor
   hardened, but the values remain in git history. ODDS_API_KEY / SGO_API_KEY / ALERT_EMAIL_
   PASSWORD must be rotated; scrub history (git filter-repo / BFG + force-push) or accept the
   exposure on the private repo.
+  CLOUD SECRETS BUG (fixed 2026-09-14, Part 6): env.txt doesn't exist on Streamlit Community
+  Cloud, so keys there must go in the app's Settings -> Secrets panel instead — but that alone
+  wasn't sufficient. Streamlit only mirrors flat secrets.toml keys into os.environ the first time
+  something in the app accesses st.secrets, and nothing in this codebase ever did (odds/pipeline
+  scripts are subprocesses that read os.getenv via python-dotenv, never st.secrets directly). So
+  even with keys correctly configured in Cloud's Secrets UI, "Refresh slate" -> run_refresh() ->
+  subprocess.run() spawned src/04_fetch_odds.py with an inherited environment that still lacked
+  both keys — identical silent-empty-odds symptom as the keys being unset entirely, harder to
+  diagnose because the user could correctly say "the keys ARE in Secrets." Fix: app.py's new
+  _load_cloud_secrets_into_env() (called at module import, right after ROOT/PROC/etc.) walks
+  st.secrets (one level of [section] nesting too, in case a key was entered nested) and
+  os.environ.setdefault()s every string value found, so subsequent subprocess.run() calls inherit
+  them. try/except around the whole thing so it no-ops cleanly locally (no secrets.toml ->
+  StreamlitSecretNotFoundError, caught). Verified directly (not through the browser): wrote a
+  temp .streamlit/secrets.toml with a flat key, ran the mirror function standalone -> os.environ
+  populated correctly; repeated with the key nested under a [section] -> still populated
+  correctly; removed with no secrets.toml at all -> caught the expected exception, no-op, nothing
+  set. Deleted the temp secrets.toml afterward (never committed).
 
 === BET TRACKER (bet_tracker.py + app.py, added 2026-09-09 Part 14) ===
 bet_tracker.py — standalone (stdlib + requests + pandas): load_bets()/save_bets() (local

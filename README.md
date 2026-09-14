@@ -54,6 +54,11 @@ optional on Cloud (`game_weather.parquet`, `game_meta.parquet`, and now `bvp_ful
 too) rather than crashing — but the batter-vs-pitcher feature is real model input, so the hosted
 predictions only match local quality once that file is actually committed.
 
+**Odds keys on Cloud (`ODDS_API_KEY` / `SGO_API_KEY`):** add them in the app's *Settings → Secrets*
+as flat (non-nested) `KEY = "value"` lines, matching the names in `env.txt.example`. Setting them
+there is necessary but not sufficient — see the "Secrets" section below for why `app.py` also has
+to explicitly pull `st.secrets` into `os.environ` before those keys reach the pipeline scripts.
+
 `.devcontainer/` gives Codespaces / VS Code a Python 3.11 container that installs
 `requirements.txt` and runs the app.
 
@@ -73,6 +78,17 @@ unconditionally shelled out to `caffeinate`, which crashed the hosted app with a
 ## Secrets
 Real API keys live only in `env.txt`, which is git-ignored (as is any `*env*.txt`). Never commit
 a file with real keys — commit `env.txt.example` only. If a key is ever committed, rotate it.
+
+**On Streamlit Community Cloud**, `env.txt` doesn't exist (it's never in the repo), so keys go in
+the app's *Settings → Secrets* instead. That alone isn't enough, though: Streamlit only mirrors
+`secrets.toml` values into `os.environ` the first time something in the app actually accesses
+`st.secrets` — and the pipeline scripts (`src/04_fetch_odds.py` etc.) read keys via `os.getenv`
+in a plain `subprocess.run()` child process, which only inherits what's already in `os.environ`
+at the time `run_refresh()` spawns it. `app.py` calls `_load_cloud_secrets_into_env()` at import
+time specifically to force that mirroring early (walking one level of `[section]` nesting too),
+so Cloud secrets actually reach those subprocesses. Fixed 2026-09-14 — before this, keys
+correctly set in Cloud's Secrets panel still silently never reached the odds fetch, producing
+empty book lines with no error (identical symptom to the keys being unset at all).
 
 ## Model Architecture
 Calibrated RandomForest classifier: train 2015-2022, validate 2023, test 2024; production fit
