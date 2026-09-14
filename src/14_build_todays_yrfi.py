@@ -135,7 +135,9 @@ def main() -> int:
     prof_map = prof.set_index("pitcher_id").to_dict("index")
     top5 = pd.read_parquet(PROC / "projected_top5_by_team.parquet")
     t5s = pd.read_parquet(PROC / "top5_batter_stats.parquet")
-    bvp = pd.read_parquet(PROC / "bvp_full_lifetime.parquet")
+    bvp_path = PROC / "bvp_full_lifetime.parquet"
+    bvp = pd.read_parquet(bvp_path) if bvp_path.exists() else pd.DataFrame(
+        columns=["batter", "pitcher", "pa", "obp", "avg", "k_pct", "hr"])
     bvp_idx = bvp.set_index(["batter", "pitcher"])
     weather = pd.read_parquet(PROC / "game_weather.parquet") \
         if (PROC / "game_weather.parquet").exists() else pd.DataFrame()

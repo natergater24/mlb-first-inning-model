@@ -26,6 +26,7 @@ data/archive/
 !data/processed/top5_batter_stats.parquet
 !data/processed/projected_top5_by_team.parquet
 !data/processed/probable_pitchers.parquet
+!data/processed/bvp_full_lifetime.parquet
 !data/models/yrfi_model.pkl
 
 # Bet tracker log — committed so the hosted app shows history (data/ has no

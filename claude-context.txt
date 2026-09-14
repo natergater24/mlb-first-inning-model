@@ -406,10 +406,24 @@ then (re)starts Streamlit headless on :8501 and opens Chrome. The git step is fa
 STREAMLIT CLOUD: a subset of data files is committed to the repo (normally .gitignored) so the
 hosted app has them — .gitignore switches data/processed/ and data/models/ to /* form + explicit
 !negations for: todays_yrfi_predictions, pitcher_nrfi_profile, top5_batter_stats,
-projected_top5_by_team, probable_pitchers (all data/processed) and data/models/yrfi_model.pkl
-(23 MB). Everything else under data/ stays excluded. The two prediction files are refreshed
-daily by launch.sh Step 6.5; the other four change only on a full rebuild (commit them manually
-after src/11/12/13).
+projected_top5_by_team, probable_pitchers, bvp_full_lifetime (all data/processed, added
+2026-09-14 — see FIXED note below) and data/models/yrfi_model.pkl (23 MB). Everything else
+under data/ stays excluded. The two prediction files are refreshed daily by launch.sh Step 6.5;
+the other five change only on a full rebuild (commit them manually after src/11/12/13, or after
+src/01 for bvp_full_lifetime specifically).
+  FIXED 2026-09-14: bvp_full_lifetime.parquet (14 MB, career batter-vs-pitcher — feeds the
+  avg_obp_vs_pitcher/avg_bvp_pa model features) was never added to this whitelist, so it didn't
+  exist on Streamlit Cloud's checkout. src/14_build_todays_yrfi.py read it with a bare
+  pd.read_parquet() (no .exists() guard, unlike game_weather.parquet/game_meta.parquet two lines
+  below it in the same function, which already degrade to an empty frame) — clicking "Refresh
+  slate" on the HOSTED app got past the earlier caffeinate fix and then crashed with
+  FileNotFoundError once it reached this read. Fixed both ends: (1) added the same .exists()
+  guard + empty-frame fallback (columns batter/pitcher/pa/obp/avg/k_pct/hr) so a missing file
+  degrades gracefully instead of crashing — bvp_agg() already catches KeyError per lookup, so an
+  empty index just means "no matchup data" for every batter, the same path already exercised
+  when a specific batter/pitcher pair isn't in the table; (2) actually committed the file to git
+  (added to .gitignore's !negations) since BvP is real model input, not just display — without
+  the real file, hosted predictions would silently run without this feature group forever.
 
 scripts/pipeline_morning.sh / pipeline_afternoon.sh — LaunchAgent wrappers
 (~/Library/LaunchAgents/com.mlb.pipeline{,.morning,.afternoon}.plist, 10:30 / 11:00 / 13:00).

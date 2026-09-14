@@ -42,12 +42,17 @@ Double-click Launch_MLB_App.command on your Desktop to run the daily update and 
 The hosted app reads its data from the repo (it has no local `data/` build). `.gitignore` keeps
 `data/` excluded **except** the files the app needs at runtime, which are committed:
 `data/models/yrfi_model.pkl` and `data/processed/{todays_yrfi_predictions, pitcher_nrfi_profile,
-top5_batter_stats, projected_top5_by_team, probable_pitchers}.parquet`.
+top5_batter_stats, projected_top5_by_team, probable_pitchers, bvp_full_lifetime}.parquet`.
 
 `launch.sh` (Step 6.5) commits and pushes the two daily files
 (`todays_yrfi_predictions.parquet`, `probable_pitchers.parquet`) every morning after inference,
-so Streamlit Cloud redeploys with the current slate within a few minutes. The other four change
+so Streamlit Cloud redeploys with the current slate within a few minutes. The other five change
 only on a full rebuild — commit them by hand after `run_pipeline.py`.
+
+`src/14_build_todays_yrfi.py` falls back to an empty frame for any support file that's genuinely
+optional on Cloud (`game_weather.parquet`, `game_meta.parquet`, and now `bvp_full_lifetime.parquet`
+too) rather than crashing — but the batter-vs-pitcher feature is real model input, so the hosted
+predictions only match local quality once that file is actually committed.
 
 `.devcontainer/` gives Codespaces / VS Code a Python 3.11 container that installs
 `requirements.txt` and runs the app.

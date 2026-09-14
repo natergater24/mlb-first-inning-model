@@ -1169,3 +1169,46 @@ confirming both environments now work through the same code path. Restarted loca
 errors in logs/streamlit.log.
 FILES CHANGED: app.py, README.md, claude-context.txt, claude-prompts.txt.
 DEPLOY: committed and pushed to origin/main so Streamlit Community Cloud redeploys with the fix.
+
+=== 2026-09-14 (Part 5) — FIX: "Refresh slate" crashed on HOSTED app, 2nd time (missing bvp_full_lifetime.parquet) ===
+TASK: with Part 4's caffeinate/sys.executable fix deployed, the user re-ran "Refresh slate" on
+the hosted Streamlit Cloud app. It got further this time — probable pitchers, active rosters,
+weather, and first-inning odds all succeeded — and crashed on the 5th step, YRFI predictions:
+FileNotFoundError: '/mount/src/mlb-first-inning-model/data/processed/bvp_full_lifetime.parquet'.
+
+ROOT CAUSE: src/14_build_todays_yrfi.py:138 read bvp_full_lifetime.parquet with a bare
+pd.read_parquet() — no .exists() guard, unlike game_weather.parquet and game_meta.parquet two
+lines below it in the SAME function, which already fall back to an empty DataFrame when absent.
+Cross-checked against the project's own established Streamlit Cloud whitelist (.gitignore
+!negations + README's documented list): pitcher_nrfi_profile.parquet, top5_batter_stats.parquet,
+and projected_top5_by_team.parquet are all committed (same "changes only on a full rebuild"
+category as this file), but bvp_full_lifetime.parquet (14 MB, career batter-vs-pitcher stats —
+feeds the avg_obp_vs_pitcher / avg_bvp_pa model feature group per src/yrfi_features.py) was
+simply never added to that whitelist. Confirmed via `ls -lh` (14M, not prohibitively large — the
+already-committed yrfi_model.pkl is 23 MB) that size wasn't the reason; this reads as a plain
+oversight when the "commit these after a full rebuild" list was first established (Part 12/13),
+not a deliberate exclusion.
+
+FIX (two parts, both needed — a fallback alone would silently degrade every hosted prediction):
+  1. src/14_build_todays_yrfi.py: added the same .exists() guard used for weather/game_meta —
+     falls back to an empty DataFrame with columns [batter, pitcher, pa, obp, avg, k_pct, hr]
+     when the file is absent. bvp_agg() already wraps each lookup in try/except KeyError (for
+     batter/pitcher pairs with zero history), so an empty index just means every batter takes
+     that already-exercised "no matchup data" path instead of crashing — no new fallback logic
+     needed, just stopped the bare read from raising before that safety net could apply.
+  2. .gitignore: added `!data/processed/bvp_full_lifetime.parquet` to the Streamlit Cloud
+     whitelist block, and committed the real file — the fallback alone would only stop the
+     crash; hosted predictions would silently run without real BvP data forever otherwise, since
+     it's genuine model input, not just a display extra.
+
+VERIFIED locally: py_compile clean. Ran src/14_build_todays_yrfi.py normally (file present) —
+succeeded, produced the same 7-game slate as before (LAD@CIN, CWS@CLE, etc.), no regression.
+Then moved bvp_full_lifetime.parquet aside to simulate the pre-fix Cloud state, re-ran — exit 0,
+same 7 games produced via the fallback path, confirming the .exists() guard actually prevents the
+crash. Restored the real file and re-ran once more to regenerate todays_yrfi_predictions.parquet
+with real BvP data (the fallback-path test run had temporarily overwritten it with degraded
+output — did not want to leave that as the checked-in/served file).
+FILES CHANGED: src/14_build_todays_yrfi.py, .gitignore, data/processed/bvp_full_lifetime.parquet
+(newly tracked), README.md, USER_MANUAL.md, claude-context.txt, claude-prompts.txt.
+DEPLOY: committed and pushed to origin/main so Streamlit Community Cloud redeploys with both the
+code fix and the actual data file.

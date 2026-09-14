@@ -269,6 +269,7 @@ committed to the repo (everything else under `data/` stays git-ignored):
 | `data/processed/pitcher_nrfi_profile.parquet` | full rebuild only |
 | `data/processed/top5_batter_stats.parquet` | full rebuild only |
 | `data/processed/projected_top5_by_team.parquet` | full rebuild only |
+| `data/processed/bvp_full_lifetime.parquet` (~14 MB) | full rebuild only — `src/01` |
 | `data/processed/todays_yrfi_predictions.parquet` | **daily — auto** (launch.sh Step 6.5) |
 | `data/processed/probable_pitchers.parquet` | **daily — auto** (launch.sh Step 6.5) |
 | `data/bet_log.csv` | **on every bet + daily — auto** (launch.sh Step 6.5) |
@@ -278,14 +279,23 @@ committed to the repo (everything else under `data/` stays git-ignored):
 redeploys within a few minutes. The step is failure-tolerant — offline / auth /
 nothing-to-commit logs a warning and the dashboard still starts.
 
-After a full `run_pipeline.py`, commit the other four files manually:
+After a full `run_pipeline.py`, commit the other five files manually:
 ```bash
 git add data/models/yrfi_model.pkl \
         data/processed/pitcher_nrfi_profile.parquet \
         data/processed/top5_batter_stats.parquet \
-        data/processed/projected_top5_by_team.parquet
+        data/processed/projected_top5_by_team.parquet \
+        data/processed/bvp_full_lifetime.parquet
 git commit -m "Rebuild: refresh model + profiles" && git push
 ```
+
+**If you ever see a `FileNotFoundError` on the hosted app after clicking Refresh
+slate:** it means a support file `src/14_build_todays_yrfi.py` reads isn't in
+this whitelist. `game_weather.parquet` and `game_meta.parquet` already degrade
+gracefully (empty frame) when missing; `bvp_full_lifetime.parquet` does too as
+of 2026-09-14, but the model still needs the *real* file committed for BvP
+features to actually feed hosted predictions — a graceful fallback avoids a
+crash, it doesn't restore data quality.
 
 `.devcontainer/devcontainer.json` provides a Python 3.11 container for Codespaces
 / VS Code that installs `requirements.txt` and serves the app on port 8501.
