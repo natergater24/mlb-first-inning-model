@@ -570,7 +570,7 @@ def game_card(r):
             om_y = float(r["model_yrfi_prob_model"]) * 100 if wa and "model_yrfi_prob_model" in r else None
             st.markdown(
                 f"<div style='font-size:11px;color:#888;letter-spacing:.5px'>"
-                f"{'⚙️ YOUR WEIGHTING' if wa else 'MODEL'}</div>"
+                f"{'⚙️ YOUR WEIGHTING (AMERICAN)' if wa else 'MODEL (AMERICAN)'}</div>"
                 + orow("NRFI", r.get("nrfi_model_odds"), nrfi, om_n)
                 + orow("YRFI", r.get("yrfi_model_odds"), yrfi, om_y),
                 unsafe_allow_html=True)
@@ -579,7 +579,7 @@ def game_card(r):
         with right:
             st.markdown(
                 "<div style='font-size:11px;color:#888;letter-spacing:.5px'>"
-                "BOOK LINES <span style='font-weight:400'>· ⚡ adds bet to slip · ↗ opens book"
+                "BOOK LINES (AMERICAN) <span style='font-weight:400'>· ⚡ adds bet to slip · ↗ opens book"
                 "</span></div>"
                 + _book_line_table(r)
                 + f"<div style='font-size:10px;color:#999;margin-top:2px'>"
@@ -619,6 +619,45 @@ def game_card(r):
         if b3.button("View details →", key=f"det_{pk}", use_container_width=True):
             st.session_state["game"] = pk
             st.rerun()
+
+        # ── inline bet logger (compact, collapsed by default) ─────────────
+        with st.expander("➕ Log a Bet", expanded=False, key=f"bet_exp_{pk}"):
+            _log_bet_form_compact(r, key_prefix=f"land_{pk}")
+
+
+def _log_bet_form_compact(r, key_prefix: str):
+    """Compact single-row bet logger embedded directly in a landing-page card."""
+    pk = int(r["game_pk"])
+    away, home = r["away_team"], r["home_team"]
+    nrfi_pct = fmt_pct(float(r["model_nrfi_prob"]) * 100, 1)
+    nrfi_odds = fmt_odds(r.get("nrfi_model_odds"))
+    st.caption(
+        f"**{away} @ {home}** · {r.get('game_date', TODAY)} · "
+        f"{r.get('away_pitcher_name') or 'TBD'} vs {r.get('home_pitcher_name') or 'TBD'} · "
+        f"Model NRFI {nrfi_pct} / {nrfi_odds}")
+
+    c1, c2, c3, c4, c5 = st.columns([1, 1.3, 1.1, 1, 1])
+    side = c1.selectbox("Bet type", ["YRFI", "NRFI"], key=f"{key_prefix}_side")
+    book = c2.selectbox("Book", bt.BOOKS, key=f"{key_prefix}_book")
+    odds_str = c3.text_input("Odds (American)", placeholder="+140", key=f"{key_prefix}_odds")
+    stake = c4.number_input("Stake ($)", min_value=0.0, value=10.0, step=5.0,
+                            key=f"{key_prefix}_stake")
+    c5.write("")
+    if c5.button("Log Bet", key=f"{key_prefix}_log", use_container_width=True):
+        try:
+            odds_val = float(odds_str)
+        except (TypeError, ValueError):
+            st.warning("Enter valid American odds, e.g. +140 or -140")
+        else:
+            try:
+                bt.add_bet(game_pk=pk, game_date=str(r.get("game_date", TODAY)),
+                           away_team=away, home_team=home, side=side, book=book,
+                           odds=odds_val, units=1.0, unit_size=float(stake))
+                st.session_state["_bets_graded"] = False
+                st.toast("✅ Bet logged")
+                st.rerun()
+            except bt.BetLogAccessError as e:
+                st.warning(str(e))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -663,9 +702,9 @@ def section_prediction(r):
                 f"Adjust or reset in **⚙️ Model weighting** at the top.")
     c1, c2 = st.columns(2)
     c1.markdown(f"### 🟢 {nrfi*100:.1f}% — No Run in the 1st")
-    c1.markdown(f"Model NRFI odds: **`{fmt_odds(r.get('nrfi_model_odds'))}`**")
+    c1.markdown(f"Model NRFI (American): **`{fmt_odds(r.get('nrfi_model_odds'))}`**")
     c2.markdown(f"### 🔴 {yrfi*100:.1f}% — Yes Run in the 1st")
-    c2.markdown(f"Model YRFI odds: **`{fmt_odds(r.get('yrfi_model_odds'))}`**")
+    c2.markdown(f"Model YRFI (American): **`{fmt_odds(r.get('yrfi_model_odds'))}`**")
 
     st.markdown(
         f"<div style='display:flex;height:26px;border-radius:5px;overflow:hidden;font-size:12px'>"
@@ -687,9 +726,9 @@ def section_prediction(r):
         if pd.notna(y_edge):
             best_y_edge = max(best_y_edge, y_edge)
         rows.append({"Book": label,
-                     "NRFI Odds": fmt_odds(no_), "NRFI Impl%": fmt_pct(ni*100, 1) if pd.notna(ni) else "—",
+                     "NRFI (American)": fmt_odds(no_), "NRFI Impl%": fmt_pct(ni*100, 1) if pd.notna(ni) else "—",
                      "NRFI Edge%": f"{n_edge:+.1f}" if pd.notna(n_edge) else "—",
-                     "YRFI Odds": fmt_odds(yo_), "YRFI Impl%": fmt_pct(yi*100, 1) if pd.notna(yi) else "—",
+                     "YRFI (American)": fmt_odds(yo_), "YRFI Impl%": fmt_pct(yi*100, 1) if pd.notna(yi) else "—",
                      "YRFI Edge%": f"{y_edge:+.1f}" if pd.notna(y_edge) else "—"})
     tbl = pd.DataFrame(rows)
 
