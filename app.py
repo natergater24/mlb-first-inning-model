@@ -15,6 +15,7 @@ Run:  /Library/Frameworks/Python.framework/Versions/3.14/bin/streamlit run app.p
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from datetime import datetime, date
@@ -30,7 +31,6 @@ ROOT = Path(__file__).resolve().parent
 PROC = ROOT / "data" / "processed"
 ODDS = ROOT / "data" / "odds"
 MODELS = ROOT / "data" / "models"
-PY = "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3"
 
 st.set_page_config(page_title="YRFI / NRFI Predictions", page_icon="⚾", layout="wide")
 
@@ -184,10 +184,11 @@ def run_refresh():
         ("First-inning odds", ["src/04_fetch_odds.py"]),
         ("YRFI predictions", ["src/14_build_todays_yrfi.py"]),
     ]
+    caffeinate = ["caffeinate", "-i"] if shutil.which("caffeinate") else []
     with st.status("Running daily update…", expanded=True) as status:
         for label, args in steps:
             st.write(f"→ {label}")
-            r = subprocess.run(["caffeinate", "-i", PY] + args, cwd=ROOT,
+            r = subprocess.run(caffeinate + [sys.executable] + args, cwd=ROOT,
                                capture_output=True, text=True)
             if r.returncode != 0:
                 st.error(f"{label} failed:\n{r.stderr[-1500:]}")

@@ -291,6 +291,16 @@ LANDING (game list):
     app.apply_weights() does adj_logit = base + Σ (w_g-1)·contrib_g.
   - Header: title, date/time, colour-coded "updated N min ago" (green <30m / yellow <120m / red older),
     "Refresh slate" button (runs the 5-step daily sequence with a live status panel).
+    FIXED 2026-09-14: run_refresh() unconditionally shelled out to `caffeinate` (macOS-only) and a
+    hardcoded local `PY = "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3"` — both
+    absent on Streamlit Community Cloud's Linux container, so clicking "Refresh slate" on the
+    HOSTED app raised FileNotFoundError (subprocess couldn't find `caffeinate`) and crashed the
+    whole page. This had been broken since the initial commit; nobody had clicked Refresh on the
+    hosted site until now. Fix: `caffeinate = ["caffeinate","-i"] if shutil.which("caffeinate")
+    else []` (keeps caffeinate locally on macOS, no-ops on Cloud) and `sys.executable` instead of
+    the hardcoded PY (always resolves to whatever interpreter is actually running the app, on
+    either platform). The now-unused `PY` constant was removed. Local macOS behavior is
+    unchanged — caffeinate is still found and used there.
   - Metric row: Games today · Strong NRFI edges (>4%) · Strong YRFI edges (>4%) · Confirmed starters.
   - Filters: All / NRFI Edge / YRFI Edge / No Edge · sort (Edge% / Game Time / Home / Away) ·
     confirmed-starters-only toggle.

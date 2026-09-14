@@ -52,6 +52,13 @@ only on a full rebuild — commit them by hand after `run_pipeline.py`.
 `.devcontainer/` gives Codespaces / VS Code a Python 3.11 container that installs
 `requirements.txt` and runs the app.
 
+The in-app **"Refresh slate"** button (`run_refresh()` in `app.py`) runs the daily pipeline
+scripts via `subprocess` using `sys.executable` (whatever Python is running the app) and only
+prepends `caffeinate` when that binary exists, so it works unmodified on both a local macOS run
+and the hosted Cloud container — it previously hardcoded a macOS-only Python path and
+unconditionally shelled out to `caffeinate`, which crashed the hosted app with a
+`FileNotFoundError` the first time anyone clicked it there (fixed 2026-09-14).
+
 ## Project Structure
 - src/ — all pipeline scripts numbered 01-14
 - app.py — Streamlit dashboard

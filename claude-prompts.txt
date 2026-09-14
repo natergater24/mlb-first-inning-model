@@ -1132,3 +1132,40 @@ uses the full absolute path to app.py and that pattern doesn't substring-match i
 remembering for future restarts in this project.
 FILES CHANGED: app.py, claude-context.txt, claude-prompts.txt.
 DEPLOY: committed app.py and pushed to origin/main.
+
+=== 2026-09-14 (Part 4) — FIX: "Refresh slate" crashed the HOSTED app (FileNotFoundError) ===
+TASK: user hit "Refresh slate" on the Streamlit Community Cloud app and got a FileNotFoundError
+crash. Traceback: app.py:190 in run_refresh() -> subprocess.run(["caffeinate", "-i", PY] + args,
+...) -> subprocess._execute_child raising the FileNotFoundError.
+
+ROOT CAUSE (found before touching code, per systematic-debugging): run_refresh() unconditionally
+prepended the macOS-only `caffeinate` binary and used a hardcoded local Python path
+(`PY = "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3"`, app.py:33) for every
+pipeline-step subprocess call. Streamlit Community Cloud runs the app in a Linux container
+(`/mount/src/...`, `/usr/local/lib/python3.14/...` per the traceback) where neither the
+`caffeinate` binary nor that Python path exist — so the very first subprocess.run() call in the
+5-step refresh sequence raised FileNotFoundError and Streamlit surfaced it as an uncaught page
+crash. `git log -S"caffeinate" -- app.py` shows this line is unchanged since the initial commit
+(a72abf4) — this bug has existed since Part 9/dashboard-rewrite; nobody had clicked Refresh Slate
+on the hosted app until now, so it was never exercised end-to-end in that environment.
+
+FIX (app.py):
+  - Added `import shutil`.
+  - Removed the hardcoded `PY` constant entirely (was unused anywhere else in the codebase —
+    confirmed by grep).
+  - run_refresh(): `caffeinate = ["caffeinate", "-i"] if shutil.which("caffeinate") else []` —
+    only prepends caffeinate when the binary actually exists (true locally on macOS, false on
+    Cloud), and uses `sys.executable` in place of the hardcoded PY — always resolves to whichever
+    interpreter is actually running the current app process, on any platform, with no
+    environment-specific assumption.
+
+VERIFIED: py_compile clean. Reproduced the mechanism directly (not through the browser, since the
+user was actively using the local app to log real bets and this bug doesn't reproduce locally —
+caffeinate exists on macOS): ran the exact subprocess.run() shape with a monkeypatched
+shutil.which returning None for "caffeinate" (simulating the Cloud container) — succeeded
+(returncode 0) — and again with caffeinate present (simulating local macOS) — also succeeded,
+confirming both environments now work through the same code path. Restarted local Streamlit
+(killed old PID directly rather than pkill -f, per the note from Part 3) — clean startup, no
+errors in logs/streamlit.log.
+FILES CHANGED: app.py, README.md, claude-context.txt, claude-prompts.txt.
+DEPLOY: committed and pushed to origin/main so Streamlit Community Cloud redeploys with the fix.
