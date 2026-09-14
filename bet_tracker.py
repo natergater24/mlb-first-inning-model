@@ -63,13 +63,30 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+class BetLogAccessError(Exception):
+    """data/bet_log.csv could not be read or written (e.g. macOS Full Disk Access)."""
+
+
+_ACCESS_ERROR_MSG = (
+    "⚠️ Cannot access bet_log.csv — check macOS Full Disk Access permissions "
+    "for Terminal in System Settings → Privacy & Security → Full Disk Access"
+)
+
+
 # ── persistence ───────────────────────────────────────────────────────────
 def load_bets() -> pd.DataFrame:
-    """Return the full bet log (empty, well-formed frame if the file is absent)."""
-    if BET_LOG.exists():
-        df = pd.read_csv(BET_LOG, dtype={"bet_id": str})
-    else:
-        df = pd.DataFrame(columns=COLUMNS)
+    """Return the full bet log (empty, well-formed frame if the file is absent
+    or empty). Raises BetLogAccessError if the file can't be read (permissions)."""
+    try:
+        if BET_LOG.exists():
+            try:
+                df = pd.read_csv(BET_LOG, dtype={"bet_id": str})
+            except pd.errors.EmptyDataError:
+                df = pd.DataFrame(columns=COLUMNS)
+        else:
+            df = pd.DataFrame(columns=COLUMNS)
+    except PermissionError:
+        raise BetLogAccessError(_ACCESS_ERROR_MSG) from None
     for c in COLUMNS:
         if c not in df.columns:
             df[c] = pd.NA
@@ -92,8 +109,11 @@ def current_unit_size(df: pd.DataFrame | None = None) -> float:
 
 
 def save_bets(df: pd.DataFrame) -> None:
-    BET_LOG.parent.mkdir(parents=True, exist_ok=True)
-    df[COLUMNS].to_csv(BET_LOG, index=False)
+    try:
+        BET_LOG.parent.mkdir(parents=True, exist_ok=True)
+        df[COLUMNS].to_csv(BET_LOG, index=False)
+    except PermissionError:
+        raise BetLogAccessError(_ACCESS_ERROR_MSG) from None
 
 
 # ── odds math ─────────────────────────────────────────────────────────────

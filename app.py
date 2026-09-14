@@ -1037,11 +1037,19 @@ def _money(v) -> str:
 
 def tracker_bar():
     """Top-of-page bankroll tracker + bet log. Shown on every view."""
-    df = bt.load_bets()
+    try:
+        df = bt.load_bets()
+    except bt.BetLogAccessError as e:
+        st.warning(str(e))
+        df = pd.DataFrame(columns=bt.COLUMNS)
 
     # Auto-grade finished games once per browser session (button forces a recheck).
     if not st.session_state.get("_bets_graded"):
-        df, n = bt.grade_open_bets(df)
+        try:
+            df, n = bt.grade_open_bets(df)
+        except bt.BetLogAccessError as e:
+            st.warning(str(e))
+            n = 0
         st.session_state["_bets_graded"] = True
         if n:
             st.toast(f"Graded {n} bet{'s' if n != 1 else ''}")
@@ -1069,10 +1077,13 @@ def tracker_bar():
     with c3:
         st.write("")
         if st.button("↻ Grade bets", use_container_width=True):
-            _, n = bt.grade_open_bets()
-            st.toast(f"Graded {n} bet{'s' if n != 1 else ''}" if n
-                     else "No bets ready to grade yet")
-            st.rerun()
+            try:
+                _, n = bt.grade_open_bets()
+                st.toast(f"Graded {n} bet{'s' if n != 1 else ''}" if n
+                         else "No bets ready to grade yet")
+                st.rerun()
+            except bt.BetLogAccessError as e:
+                st.warning(str(e))
 
     by_book = bt.record_by_book(df)
     if not by_book.empty:
@@ -1124,14 +1135,20 @@ def _edit_bet_form(b: pd.Series, ctx: str = "log"):
                             step=0.5, key=f"eb_units_{k}")
     s1, s2 = st.columns(2)
     if s1.button("💾 Save", key=f"eb_save_{k}", use_container_width=True):
-        bt.update_bet(real_id, side=side.upper(), book=book,
-                      odds=float(odds), units=float(units))
-        st.toast("Bet updated")
-        st.rerun()
+        try:
+            bt.update_bet(real_id, side=side.upper(), book=book,
+                          odds=float(odds), units=float(units))
+            st.toast("Bet updated")
+            st.rerun()
+        except bt.BetLogAccessError as e:
+            st.warning(str(e))
     if s2.button("🗑 Delete", key=f"eb_del_{k}", use_container_width=True):
-        bt.delete_bet(real_id)
-        st.toast("Bet deleted")
-        st.rerun()
+        try:
+            bt.delete_bet(real_id)
+            st.toast("Bet deleted")
+            st.rerun()
+        except bt.BetLogAccessError as e:
+            st.warning(str(e))
 
 
 def section_track_bet(r):
@@ -1158,15 +1175,22 @@ def section_track_bet(r):
     st.caption(f"Stake is in **units** · 1 unit = \\${us:g} (set at the top) · "
                f"this bet risks {units:g}u = \\${units * us:,.0f}")
     if st.button("➕ Log this bet", key=f"tb_log_{pk}", type="primary"):
-        bt.add_bet(game_pk=pk, game_date=str(r.get("game_date", TODAY)),
-                   away_team=r["away_team"], home_team=r["home_team"],
-                   side=side, book=book, odds=float(odds), units=float(units),
-                   unit_size=us)
-        st.session_state["_bets_graded"] = False
-        st.toast(f"Logged {side} {bt.american_str(odds)} · {units:g}u")
-        st.rerun()
+        try:
+            bt.add_bet(game_pk=pk, game_date=str(r.get("game_date", TODAY)),
+                       away_team=r["away_team"], home_team=r["home_team"],
+                       side=side, book=book, odds=float(odds), units=float(units),
+                       unit_size=us)
+            st.session_state["_bets_graded"] = False
+            st.toast(f"Logged {side} {bt.american_str(odds)} · {units:g}u")
+            st.rerun()
+        except bt.BetLogAccessError as e:
+            st.warning(str(e))
 
-    mine = bt.load_bets()
+    try:
+        mine = bt.load_bets()
+    except bt.BetLogAccessError as e:
+        st.warning(str(e))
+        mine = pd.DataFrame(columns=bt.COLUMNS)
     if not mine.empty:
         mine = mine[pd.to_numeric(mine["game_pk"], errors="coerce") == pk]
     if not mine.empty:
