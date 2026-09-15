@@ -140,7 +140,7 @@ Neither restarts Streamlit; use `launch.sh` or Option B for that.
 
 ## Dashboard (http://localhost:8501)
 
-Single page, two views.
+Single page, three views.
 
 **Landing (game list)**
 - ⚙️ **Model weighting** expander at the top: one slider per feature group
@@ -153,12 +153,16 @@ Single page, two views.
 - One card per game: teams + records + probable pitchers + NRFI% (left);
   both model odds with the better-value side marked ◄ (middle); 2×4 book-lines
   table DK/FD/MGM/CZR with ⚡/↗ links (right); recommended-bet badge + edge% +
-  EV/$100 + "View details →".
+  EV/$100 + "View details →"; a collapsed **➕ Log a Bet** at the bottom.
 
 **Detail view (7 sections + Track a Bet):** model summary + book table, then
 **Track a Bet**, then weather/park (with the HR-factor explainer) · away pitcher
 profile · home pitcher profile · away team projected top-5 vs pitcher · home team
 projected top-5 · historical YRFI context.
+
+**All Bets view:** reached via "View all N bets →" under the **🧾 Bet log**
+table (see Bet Tracker below) — the complete bet history as the same table,
+unpaginated. A **← Back** button returns to the previous view.
 
 Sidebar shows model test AUC / Brier / ECE / accuracy and the caveats.
 
@@ -170,8 +174,21 @@ Sidebar shows model test AUC / Brier / ECE / accuracy and the caveats.
 `W-L | +Xu | +$X,XXX` · open bets · ROI. Next to it a **`$ / unit (new bets)`**
 box (default **$25**) and a **Grade bets** button. Two expanders:
 - **📚 Record by sportsbook** — W-L, net units and net $ per book.
-- **🧾 Bet log** — every bet; ungraded bets whose game hasn't started can be
-  edited (side / book / odds / units) or deleted inline.
+- **🧾 Bet log** — a true table (`st.dataframe`), one row per bet: **Date**
+  (MM/DD/YYYY, the game's date — not when you placed the bet), Game, Side,
+  Book, Odds, Units, **Stake ($)**, **Payout ($)**, Status, **1st-Inn Runs**
+  (always a whole number). Sorted by game date descending, newest first. Shows
+  the **10 most recent bets**; a **"View all N bets →"** button underneath
+  drills through to a dedicated **All Bets** page with the complete history (a
+  **← Back** button returns to wherever you were). Ungraded bets whose game
+  hasn't started still get an inline **Edit or delete** expander below the
+  table (side / book / odds / units), on both the summary view and the full
+  history page.
+  - **Payout** = what you'd get back *including your original stake* — not
+    just profit. Won: stake + winnings. Lost: `$0`. Open: the *potential*
+    payout if it wins, at the odds you logged. (`Stake ($) = units × that
+    bet's own $/unit`, frozen at log time — same value tracker_stats() already
+    used for net $, just surfaced per-row now.)
 
 **Units, not dollars.** You stake in **units**. Each bet stores the `$ / unit`
 value that was set *when you logged it*, so changing `$ / unit` later only

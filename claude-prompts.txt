@@ -1259,3 +1259,62 @@ FILES CHANGED: app.py, README.md, USER_MANUAL.md, claude-context.txt, claude-pro
 DEPLOY: committed and pushed to origin/main so Streamlit Community Cloud redeploys with the fix.
 Told the user to also spot-check Cloud's "Manage app" logs for any 401s around the odds step, in
 case the key-rotation angle (b above) is ALSO a factor alongside the propagation bug.
+
+=== 2026-09-15 — BET LOG: TRUE TABLE, STAKE/PAYOUT, ALL-BETS DRILL-THROUGH ===
+TASK: on the home page's "🧾 Bet log" section — (1) render it as a true table, not the markdown
+lines it was; (2) show each bet's game date; (3) order by date descending (MM/DD/YYYY); (4) show
+the 10 latest with a drill-through to a new page listing full bet history; (5) 1st-inn runs must
+always show as a whole number, never a decimal; (6) show each bet's stake and total payout
+(payout including the original stake back).
+
+SCOPING DECISION: read every project doc first (claude-context.txt, claude-prompts.txt in full,
+README.md, USER_MANUAL.md) as instructed. "Bet log" is the name of one specific labeled UI element
+(the "🧾 Bet log" expander in tracker_bar(), shown on the home page) — distinct from
+section_track_bet()'s unlabeled "Bets on this game" list in the detail view. Scoped items 1-4 and
+6 to that one element, since the ask was explicitly "on the home page, under bet log." Item 5 (the
+whole-number-runs fix) is a plain formatting bug with no page qualifier in the ask, so applied it
+everywhere first_inn_runs is displayed, including the untouched per-game list.
+
+IMPLEMENTATION (app.py):
+  - New helpers: _fmt_runs(v) (int() if notna else "—" — root cause: first_inn_runs is float64
+    once any open/ungraded row's NaN forces the whole CSV column to float dtype, even though a
+    graded row's raw stored value is the bare int "0"/"1"); _fmt_date_mdy(s) (YYYY-MM-DD ->
+    MM/DD/YYYY); _fmt_currency(v) ("$X,XXX.XX"); _bet_stake_payout(b) -> (stake, payout) where
+    stake = units * that bet's own frozen unit_size, and payout INCLUDES the stake back (not just
+    profit) — won: stake + result_units*unit_size; lost: $0; open: potential payout if it wins =
+    stake * (1 + bt.profit_multiple(odds)), reusing the existing profit_multiple() rather than
+    re-deriving American-odds payout math.
+  - _bet_log_table_df(df): builds the display DataFrame, sorted by [game_date, placed_at]
+    descending (ISO date strings sort correctly as plain strings, no datetime parsing needed for
+    ordering) — columns Date/Game/Side/Book/Odds/Units/Stake/Payout/Status/1st-Inn Runs.
+  - render_bet_log_table(df, limit, ctx): st.dataframe of the above (hide_index, full width);
+    when limit is set and more rows exist beyond it, a "View all N bets →" button sets
+    st.session_state["view"]="bet_history" and reruns; below the table, any bet in the shown slice
+    that's still bt.is_editable() gets its own "Edit or delete" expander reusing the existing,
+    unchanged _edit_bet_form() — kept editing as a below-table expander list rather than moving to
+    st.data_editor, since data_editor has no clean way to disable editing per-row (only per-column)
+    without extra plumbing, and the expander approach reuses already-working code.
+  - page_bet_history(df): new page — "← Back" (pops session_state["view"], reruns) + "🧾 All
+    Bets" title + render_bet_log_table(df, limit=None, ctx="hist") (every row, no cap).
+  - tracker_bar(): its bet-log expander now calls render_bet_log_table(df, limit=10, ctx="log")
+    instead of the old render_bet_log(); tracker_bar() now RETURNS df so main() can hand it to the
+    new page. main() dispatch gained a check ahead of the existing game/landing branch:
+    `if st.session_state.get("view") == "bet_history": page_bet_history(bets_df)`.
+  - render_bet_log() (still used by section_track_bet's per-game list) untouched except its
+    first_inn_runs line now goes through the same _fmt_runs().
+
+VERIFIED: backed up the real data/bet_log.csv to /tmp first (never left synthetic data in the
+committed file). Generated 14-15 synthetic bets across different dates/odds/statuses and drove
+the app in-browser (claude-in-chrome): confirmed date-descending sort, MM/DD/YYYY formatting,
+whole-number runs, and hand-checked payout math for several odds (-150 win -> 25*(1+100/150) =
+$41.67 ✓, +105 win -> 25*2.05 = $51.25 ✓, any lost -> $0.00 ✓, open bet at -130 -> potential
+$44.23 ✓ = 25*(1+100/130)); clicked "View all N bets →", landed on the All Bets page with the full
+table and no landing-page game cards, clicked "← Back", returned cleanly to the landing page;
+added one open+future-game-start bet and confirmed its "Edit or delete" expander still renders
+and prefills correctly. Caught and corrected one bad synthetic-data batch along the way — random
+result_units uncorrelated with status produced an impossible "won bet, $0 payout" row; not a code
+bug, just internally-inconsistent test data (real grade_open_bets() always keeps them consistent).
+Restored the real bet_log.csv (single seed row, TOR@ATH) from the backup before deploying;
+confirmed with `cat` that it matched byte-for-byte pre/post.
+FILES CHANGED: app.py, USER_MANUAL.md, claude-context.txt, claude-prompts.txt.
+DEPLOY: committed and pushed to origin/main so Streamlit Community Cloud redeploys with the fix.

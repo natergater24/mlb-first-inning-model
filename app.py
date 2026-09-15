@@ -1174,11 +1174,45 @@ def tracker_bar():
                 hide_index=True, use_container_width=True)
 
     with st.expander(f"🧾 Bet log ({len(df)})"):
-        render_bet_log(df, ctx="log")
+        render_bet_log_table(df, limit=10, ctx="log")
         st.caption("Saved to `data/bet_log.csv` — published to the live site each "
                    "morning by `launch.sh`. On the hosted site, log/edit bets from "
                    "the local app; changes there won't survive the next redeploy.")
     st.divider()
+    return df
+
+
+def _fmt_runs(v) -> str:
+    """1st-inning runs as a whole number — never a decimal (source column is
+    float64 once any open/ungraded row makes the whole CSV column mixed-NaN)."""
+    return str(int(v)) if pd.notna(v) else "—"
+
+
+def _fmt_date_mdy(s) -> str:
+    """game_date (YYYY-MM-DD) -> MM/DD/YYYY for display."""
+    try:
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d").strftime("%m/%d/%Y")
+    except ValueError:
+        return str(s)
+
+
+def _bet_stake_payout(b) -> tuple[float, float]:
+    """(stake $, payout $ incl. original stake) — payout is potential (if it
+    wins) for open bets, the actual payout for won bets, and $0 for lost bets."""
+    units = float(b["units"])
+    unit_size = float(b["unit_size"])
+    stake = units * unit_size
+    status = str(b["status"])
+    if status == "won":
+        payout = stake + float(b["result_units"]) * unit_size
+    elif status == "lost":
+        payout = 0.0
+    else:
+        try:
+            payout = stake * (1 + bt.profit_multiple(float(b["odds"])))
+        except (TypeError, ValueError, ZeroDivisionError):
+            payout = float("nan")
+    return stake, payout
 
 
 def render_bet_log(df: pd.DataFrame, ctx: str = "log"):
@@ -1191,13 +1225,78 @@ def render_bet_log(df: pd.DataFrame, ctx: str = "log"):
                 f"`{bt.american_str(b['odds'])}` · {float(b['units']):g}u · {b['book']}")
         if str(b["status"]) in ("won", "lost"):
             ru = float(b["result_units"]) if pd.notna(b["result_units"]) else 0.0
-            fir = b.get("first_inn_runs")
-            line += f" · **{ru:+.2f}u** · 1st-inn runs: {fir}"
+            line += f" · **{ru:+.2f}u** · 1st-inn runs: {_fmt_runs(b.get('first_inn_runs'))}"
         if bt.is_editable(b):
             with st.expander(line):
                 _edit_bet_form(b, ctx)
         else:
             st.markdown(line)
+
+
+def _fmt_currency(v) -> str:
+    return f"${float(v):,.2f}"
+
+
+def _bet_log_table_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Bets sorted by game date (then placed_at) descending, formatted for
+    display as a true table."""
+    ordered = df.sort_values(["game_date", "placed_at"], ascending=[False, False])
+    rows = []
+    for _, b in ordered.iterrows():
+        stake, payout = _bet_stake_payout(b)
+        status = str(b["status"])
+        status_label = {"won": "✅ Won", "lost": "❌ Lost", "open": "🕗 Open"}.get(status, status)
+        rows.append({
+            "Date": _fmt_date_mdy(b.get("game_date")),
+            "Game": f"{b['away_team']} @ {b['home_team']}",
+            "Side": b["side"],
+            "Book": b["book"],
+            "Odds": bt.american_str(b["odds"]),
+            "Units": f"{float(b['units']):g}u",
+            "Stake": _fmt_currency(stake),
+            "Payout": _fmt_currency(payout) if pd.notna(payout) else "—",
+            "Status": status_label,
+            "1st-Inn Runs": _fmt_runs(b.get("first_inn_runs")),
+        })
+    return pd.DataFrame(rows)
+
+
+def render_bet_log_table(df: pd.DataFrame, limit: int | None = None, ctx: str = "log"):
+    """True-table bet log: date/game/side/book/odds/units/stake/payout/status/runs,
+    sorted by date descending. Shows the `limit` latest with a drill-through to the
+    full history page when there are more; edit/delete stays available (as inline
+    expanders below the table) for any bet that's still open and not yet started."""
+    if df.empty:
+        st.caption("No bets logged yet — open a game and use **Track a Bet**, "
+                   "or **➕ Log a Bet** on any card.")
+        return
+
+    ordered = df.sort_values(["game_date", "placed_at"], ascending=[False, False])
+    total = len(ordered)
+    shown = ordered.head(limit) if limit else ordered
+
+    st.dataframe(_bet_log_table_df(shown), hide_index=True, use_container_width=True)
+
+    if limit and total > limit:
+        if st.button(f"View all {total} bets →", key=f"{ctx}_view_all"):
+            st.session_state["view"] = "bet_history"
+            st.rerun()
+
+    editable = shown[shown.apply(bt.is_editable, axis=1)]
+    if not editable.empty:
+        st.caption("Edit or delete an open bet (game hasn't started yet):")
+        for _, b in editable.iterrows():
+            label = f"{b['away_team']} @ {b['home_team']} · {b['side']} {bt.american_str(b['odds'])}"
+            with st.expander(label):
+                _edit_bet_form(b, ctx)
+
+
+def page_bet_history(df: pd.DataFrame):
+    if st.button("← Back"):
+        st.session_state.pop("view", None)
+        st.rerun()
+    st.title("🧾 All Bets")
+    render_bet_log_table(df, limit=None, ctx="hist")
 
 
 def _edit_bet_form(b: pd.Series, ctx: str = "log"):
@@ -1284,13 +1383,15 @@ def main():
     pred = load_predictions()
     meta = load_model_meta()
 
-    tracker_bar()
+    bets_df = tracker_bar()
 
     if not pred.empty:
         weights = render_weight_controls(meta)
         pred = apply_weights(pred, weights)
 
-    if "game" in st.session_state and not pred.empty:
+    if st.session_state.get("view") == "bet_history":
+        page_bet_history(bets_df)
+    elif "game" in st.session_state and not pred.empty:
         page_detail(int(st.session_state["game"]), pred)
     else:
         page_landing(pred)

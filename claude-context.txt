@@ -276,21 +276,65 @@ PermissionError is caught and re-raised as bt.BetLogAccessError with a user-faci
 app.py catches it at every call site (tracker_bar, grade-bets button, bet edit/delete,
 add-bet, per-game bet list) and shows st.warning + falls back to an empty frame instead of
 crashing the whole page.
-app.py: tracker_bar() at the very top of every view (main() calls it before render_weight_controls)
-= prominent "W-L | +Xu | +$X,XXX" (26px) + small "combined record · N open · ROI" line, a
-"$ / unit (new bets)" box (default = current_unit_size, i.e. $25), a "Grade bets" button, a
-"📚 Record by sportsbook" expander (bt.record_by_book table) and a "🧾 Bet log" expander
-(edit/delete inline for editable bets — widget keys namespaced by a `ctx` prefix so the same bet
-can render in the top log AND the per-game list without StreamlitDuplicateElementKey).
+app.py: tracker_bar() at the very top of every view (main() calls it before render_weight_controls,
+and now RETURNS the bets df so main() can hand it to page_bet_history) = prominent
+"W-L | +Xu | +$X,XXX" (26px) + small "combined record · N open · ROI" line, a "$ / unit (new bets)"
+box (default = current_unit_size, i.e. $25), a "Grade bets" button, a "📚 Record by sportsbook"
+expander (bt.record_by_book table) and a "🧾 Bet log" expander (edit/delete inline for editable
+bets — widget keys namespaced by a `ctx` prefix so the same bet can render in the top log AND the
+per-game list without StreamlitDuplicateElementKey).
 section_track_bet(r) between detail sections 1 and 2: side (default = recommended bet), book, odds
 (prefilled from that book's line, key varies with side/book so it re-prefills), "Units staked"
 (caption shows \$ equivalent — the \$ must be escaped in st.caption/markdown or it triggers LaTeX),
 passes unit_size=session $/unit to add_bet. Auto-grades once per browser session on load.
 Seed row: TOR@ATH 2026-09-09 NRFI FanDuel +100 1u @ \$25/unit won -> tracker reads
 1-0 | +1.0u | +\$25.
+UPDATED 2026-09-15 — BET LOG -> TRUE TABLE + STAKE/PAYOUT + ALL-BETS DRILL-THROUGH:
+  - tracker_bar()'s "🧾 Bet log" expander now calls render_bet_log_table(df, limit=10, ctx="log")
+    instead of the old markdown-lines render_bet_log() (which still exists, unchanged except the
+    runs-formatting fix below, and is still used by section_track_bet's per-game "Bets on this
+    game" list — that one was left as a simple list; the table/date/stake/payout/drill-through
+    redesign is scoped to the home page's actual "🧾 Bet log" element per the ask, not every bet
+    display in the app).
+  - render_bet_log_table(df, limit, ctx): sorts by [game_date, placed_at] descending (ISO date
+    strings sort correctly lexicographically, no need to parse for ordering), st.dataframe of
+    _bet_log_table_df(shown) — columns Date (MM/DD/YYYY via _fmt_date_mdy), Game, Side, Book,
+    Odds, Units, Stake, Payout, Status (✅/❌/🕗 + label), 1st-Inn Runs. When limit is set and more
+    rows exist, a "View all N bets →" button sets st.session_state["view"]="bet_history" + reruns.
+    Below the table: any bet in the shown slice that bt.is_editable() still gets its own
+    "Edit or delete" expander (reuses the existing _edit_bet_form unchanged) — table is otherwise
+    read-only, editing didn't move into st.data_editor (no clean way to gate editability per row
+    there without extra plumbing; a plain expander-per-editable-bet below the table was simpler
+    and reuses already-working code).
+  - _bet_stake_payout(b) -> (stake, payout): stake = units * unit_size (that bet's own frozen
+    rate). payout INCLUDES the original stake back (not just profit) — won: stake + result_units*
+    unit_size; lost: $0; open: potential payout if it wins = stake * (1 + bt.profit_multiple(odds))
+    (reused the existing profit_multiple() helper rather than re-deriving American-odds payout
+    math a second time).
+  - _fmt_runs(v): int(v) if notna else "—" — first_inn_runs was displaying as "0.0"/"1.0" (a
+    decimal) because the CSV column is float64 once ANY open/ungraded row's NaN forces the whole
+    pandas column dtype to float, even though a graded row's raw CSV value is the bare int "0"/"1".
+    Applied in both render_bet_log_table AND the old render_bet_log (the per-game list) — this
+    part of the fix wasn't scoped to just the home page, since a decimal run count is a plain
+    formatting bug wherever it shows.
+  - page_bet_history(df): "← Back" button (pops st.session_state["view"], reruns) + "🧾 All Bets"
+    title + render_bet_log_table(df, limit=None, ctx="hist") (same table, every row, no cap).
+    main() dispatch gained a check ahead of the existing game/landing branch:
+    `if st.session_state.get("view") == "bet_history": page_bet_history(bets_df)`.
+  - VERIFIED with synthetic bet rows (backed up the real bet_log.csv to /tmp first, restored
+    after): 15+ rows sorted correctly newest-date-first; "View all N" button drilled through and
+    "← Back" returned cleanly; payout math checked by hand for several odds (-150 win ->
+    25*(1+100/150)=$41.67 ✓, +105 win -> 25*2.05=$51.25 ✓, any lost -> $0.00 ✓, open -150 ->
+    potential $44.23 ✓); editable-bet expander (open + future game_start) rendered and prefilled
+    correctly. One early synthetic-data mistake caught and corrected before trusting the result:
+    randomizing result_units independently of status produced an impossible "won with $0 payout"
+    row — not a code bug, just internally-inconsistent test data (real grade_open_bets() always
+    keeps them consistent) — regenerated with status-correlated result_units and re-verified.
+    Restored the real bet_log.csv (single seed row) before deploying.
 
 === DASHBOARD (app.py) ===
-Completely rewritten 2026-09-09. Streamlit on localhost:8501. Single page, two views:
+Completely rewritten 2026-09-09. Streamlit on localhost:8501. Single page, three views
+(landing / detail / bet history — the third added 2026-09-15, see BET TRACKER above):
 
 LANDING (game list):
   - ⚙️ Model weighting expander at the very top: one slider (0-200%, default 100%) per feature group
