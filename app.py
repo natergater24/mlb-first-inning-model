@@ -1175,9 +1175,11 @@ def tracker_bar():
 
     with st.expander(f"🧾 Bet log ({len(df)})"):
         render_bet_log_table(df, limit=10, ctx="log")
-        st.caption("Saved to `data/bet_log.csv` — published to the live site each "
-                   "morning by `launch.sh`. On the hosted site, log/edit bets from "
-                   "the local app; changes there won't survive the next redeploy.")
+        st.caption("Saved to `data/bet_log.csv` and auto-committed + pushed to GitHub "
+                   "immediately (falls back to `launch.sh`'s morning push if you're "
+                   "offline). **Log/edit bets from the local app** — the hosted site "
+                   "has no push credentials, so a change made there only lives in that "
+                   "session and is gone on the next reboot/redeploy.")
     st.divider()
     return df
 

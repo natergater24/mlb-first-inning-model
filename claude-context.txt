@@ -260,14 +260,59 @@ env.txt — ODDS_API_KEY, SGO_API_KEY (project uses env.txt not .env). git-ignor
 === BET TRACKER (bet_tracker.py + app.py, added 2026-09-09 Part 14) ===
 bet_tracker.py — standalone (stdlib + requests + pandas): load_bets()/save_bets() (local
 data/bet_log.csv, LOCAL-FIRST — launch.sh Step 6.5 commits+pushes it so the hosted app matches;
-all storage behind these two fns so a GitHub-API write-back can be added later), add_bet /
-update_bet / delete_bet / is_editable (open AND now < game_start, start fetched from the MLB
+all storage behind these two fns so a GitHub-API write-back can be added later),
+INCIDENT 2026-09-16: user logged several real bets directly on the HOSTED (Streamlit Cloud) app.
+Streamlit Cloud's filesystem is ephemeral — save_bets() writing there is a real write, but only to
+that one container's local disk, with no mechanism pushing it to GitHub. The app auto-sleeps/
+redeploys on inactivity or manual reboot, which discards the container and rebuilds fresh from
+GitHub (which only ever had the 1-row seed) — so every hosted-logged bet was lost, unrecoverably
+(no snapshot/backup exists for Cloud's ephemeral disk; confirmed via `git diff`/`git show HEAD` /
+local file all being byte-identical single-seed-row, i.e. the extra bets touched none of the 3
+places I could inspect). This wasn't a new bug — USER_MANUAL.md, this file, and the bet-log
+caption in-app all already said hosted writes don't survive a redeploy — but losing real data
+prompted two follow-ups (both 2026-09-16, see BET TRACKER AUTO-COMMIT below and claude-prompts.txt):
+(1) auto-commit+push on every local save so a forgotten manual push can no longer cause this for
+LOCAL bets, (2) a menu of options (not yet chosen) for making HOSTED-side logging durable too.
+add_bet / update_bet / delete_bet / is_editable (open AND now < game_start, start fetched from the MLB
 schedule API at log time), grade_open_bets (MLB Stats API linescore — 1st-inning runs; NRFI wins
 on 0, YRFI on >=1; only once the 1st is complete, or early if a run already scored; NO pushes),
 tracker_stats (W-L, net units, net $, ROI), record_by_book (per-book W-L / units / $),
 current_unit_size (most recent bet's size, else DEFAULT_UNIT_SIZE=25). result_units = units*payout
 on win, -units on loss. DYNAMIC $ ACCOUNTING: each bet row stores unit_size (dollars/unit at log
 time, frozen); net $ = Σ result_units_i * unit_size_i, so changing $/unit only affects new bets.
+BET TRACKER AUTO-COMMIT (added 2026-09-16, see INCIDENT above): save_bets() now calls
+_auto_commit_bet_log() after every write — `git add data/bet_log.csv`, short-circuit via
+`git diff --cached --quiet -- data/bet_log.csv` if nothing actually changed (grade_open_bets only
+calls save_bets() when graded>0 anyway, so this mostly guards add/update/delete no-ops), then
+`git commit -m "Bet log update {iso timestamp}"` + `git push`. Everything wrapped in one
+try/except Exception: pass — matches launch.sh Step 6.5's failure-tolerant spirit exactly (offline
+/ no git / auth failure never blocks the actual CSV write, which already happened before this
+runs). This only ever succeeds where real push credentials exist (the local machine's own git
+config) — on Streamlit Cloud the push leg fails silently every time (no credentials there), which
+is fine/expected: it was never going to help hosted-side durability, only local. VERIFIED in an
+isolated scratch git repo (bare remote + working copy under /tmp, NOT the real project repo, to
+avoid triggering a live push + Streamlit Cloud redeploy just for a test): (1) a real change ->
+committed and pushed, remote log matched; (2) re-running with no changes -> short-circuited, no
+empty commit; (3) pointed origin at a nonexistent path to force a push failure -> caught silently,
+function returned normally, AND the local commit still happened before the failed push (so even
+fully offline, git history captures the change locally; a later successful push or launch.sh run
+picks it up). app.py's bet-log caption updated to describe the new auto-push instead of only
+"published each morning by launch.sh".
+NOT YET DONE — HOSTED-SIDE PERSISTENCE: user asked for options to log bets durably from the
+hosted app itself, not just locally. Menu presented (none built yet, pending user's choice):
+  (1) GitHub Contents API write-back on every hosted bet (small change, reuses the CSV/git model
+      exactly as bet_tracker.py's docstring always intended — "so a GitHub-API write-back can be
+      added later without touching app.py") — but every hosted-side bet action becomes a real
+      commit, which triggers a full Streamlit Cloud redeploy of the app (Cloud watches the repo);
+      also a bare-CSV-in-git approach doesn't handle concurrent local+hosted writes safely.
+  (2) Move storage off flat-file-in-git entirely to an external store both local and hosted read/
+      write via API — Google Sheets (`streamlit-gsheets` community connector: free, human-
+      viewable/editable outside the app too, no redeploy side effect) or a small hosted DB
+      (Supabase/Postgres, similar tradeoffs). Bigger change: rewrites load_bets()/save_bets()
+      internals (call sites in app.py stay the same, by design) and needs a new account/credential
+      stored as a Streamlit secret.
+  Streamlit Community Cloud's free tier has no persistent disk at all, so "just don't wipe the
+  ephemeral filesystem" and "drop in a local SQLite file" are not options on this host.
 UPDATED 2026-09-14: load_bets()/save_bets() no longer crash on a bet_log.csv access failure
 (e.g. macOS Full Disk Access not granted to Terminal for the Desktop-nested project path — file
 Unix perms were already correct at 644, this is a TCC sandboxing issue, not chmod-fixable).

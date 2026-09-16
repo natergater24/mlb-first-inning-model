@@ -219,11 +219,31 @@ win, `-units` on a loss. Net dollars = sum of each bet's `result_units x its own
 unit_size`.
 
 **Storage:** `data/bet_log.csv` in the repo, read/written on the local
-filesystem. `launch.sh` Step 6.5 commits + pushes it every morning so the hosted
-site shows the same history. **Log and edit bets from the local app** — on the
-hosted site a change saves for that session only and is lost on the next
-redeploy. (`bet_tracker.load_bets()` / `save_bets()` isolate storage, so a
-GitHub-API write-back can be switched on later without touching `app.py`.)
+filesystem. Every `save_bets()` call — add/edit/delete/grade — now
+**auto-commits and pushes immediately** (`_auto_commit_bet_log()` in
+`bet_tracker.py`, added 2026-09-16), on top of `launch.sh` Step 6.5's morning
+push. It's best-effort: failure (offline, git missing, nothing changed) is
+caught silently, exactly like Step 6.5, and a git failure never blocks the
+actual CSV write. **Log and edit bets from the local app only** — the hosted
+site has no push credentials, so `_auto_commit_bet_log()` there always fails
+silently and a bet logged there only lives in that session's ephemeral
+filesystem, gone on the next reboot/redeploy. (This bit real: someone logged
+several bets directly on the hosted app and lost all of them on a reboot —
+see the 2026-09-16 entry in `claude-prompts.txt`.) `bet_tracker.load_bets()` /
+`save_bets()` isolate storage, so a GitHub-API write-back or a real database
+could replace the CSV without touching `app.py`'s call sites.
+
+**Logging bets on the hosted app itself (not yet implemented):** options
+considered 2026-09-16 — (1) GitHub Contents API write-back on every bet
+(minimal change, reuses the CSV/git model, but each hosted-side bet triggers
+a real commit and a Streamlit Cloud redeploy of the whole app); (2) move
+storage to an external store (Google Sheets via `streamlit-gsheets`, or a
+small hosted DB like Supabase) that both the local and hosted app read/write
+via API — no redeploy side effect, handles concurrent writes safely, but
+needs a new account/credentials and a rewrite of `load_bets()`/`save_bets()`.
+Community Cloud's free tier has no persistent disk, so neither a local SQLite
+file nor "just don't lose the ephemeral filesystem" is an option. Pending a
+decision on which to build.
 
 ---
 

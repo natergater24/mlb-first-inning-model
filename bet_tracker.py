@@ -32,6 +32,7 @@ Row schema (one row per bet; multiple bets per game / per book allowed):
 """
 from __future__ import annotations
 
+import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -108,12 +109,37 @@ def current_unit_size(df: pd.DataFrame | None = None) -> float:
         return DEFAULT_UNIT_SIZE
 
 
+def _auto_commit_bet_log() -> None:
+    """Best-effort commit+push of data/bet_log.csv right after every write, so a
+    bet logged locally survives even if launch.sh's morning push hasn't run yet.
+    Silently no-ops on any failure (git missing, offline, no push credentials,
+    nothing changed) -- same failure-tolerant spirit as launch.sh Step 6.5. This
+    only ever succeeds where real push credentials exist (the local machine);
+    on Streamlit Cloud (which has no push access) it just fails quietly."""
+    try:
+        subprocess.run(["git", "-C", str(ROOT), "add", "data/bet_log.csv"],
+                        capture_output=True, timeout=10, check=True)
+        nothing_staged = subprocess.run(
+            ["git", "-C", str(ROOT), "diff", "--cached", "--quiet", "--", "data/bet_log.csv"],
+            capture_output=True, timeout=10)
+        if nothing_staged.returncode == 0:
+            return
+        subprocess.run(["git", "-C", str(ROOT), "commit", "-m",
+                        f"Bet log update {_now_iso()}"],
+                        capture_output=True, timeout=10, check=True)
+        subprocess.run(["git", "-C", str(ROOT), "push"],
+                        capture_output=True, timeout=20, check=True)
+    except Exception:
+        pass
+
+
 def save_bets(df: pd.DataFrame) -> None:
     try:
         BET_LOG.parent.mkdir(parents=True, exist_ok=True)
         df[COLUMNS].to_csv(BET_LOG, index=False)
     except PermissionError:
         raise BetLogAccessError(_ACCESS_ERROR_MSG) from None
+    _auto_commit_bet_log()
 
 
 # ── odds math ─────────────────────────────────────────────────────────────
