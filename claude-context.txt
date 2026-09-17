@@ -434,6 +434,15 @@ LANDING (game list):
     the hardcoded PY (always resolves to whatever interpreter is actually running the app, on
     either platform). The now-unused `PY` constant was removed. Local macOS behavior is
     unchanged — caffeinate is still found and used there.
+    FIXED 2026-09-17: subprocess.run(..., capture_output=True) captures the child step's
+    stdout/stderr into `r.stdout`/`r.stderr` — it never reaches this process's own stdout, so on
+    Cloud it never reached the "Manage app" log viewer either, EVEN WHEN THE STEP SUCCEEDED (exit
+    0). A step that "succeeds" but silently accomplishes nothing (see the game_meta.parquet /
+    empty-odds bug in KEY DATA FILES above) left zero trace anywhere. Now prints
+    f"--- {label}: stdout ---\n{r.stdout}\n--- {label}: stderr ---\n{r.stderr}" unconditionally,
+    for every step, regardless of exit code — this is what actually let the game_meta bug get
+    diagnosed at all (the Cloud logs were otherwise just Streamlit's own deprecation warnings, no
+    trace of what src/04/src/14 had printed).
   - Metric row: Games today · Strong NRFI edges (>4%) · Strong YRFI edges (>4%) · Confirmed starters.
   - Filters: All / NRFI Edge / YRFI Edge / No Edge · sort (Edge% / Game Time / Home / Away) ·
     confirmed-starters-only toggle.
@@ -595,9 +604,30 @@ Keep it strictly separated from the trained YRFI RandomForest + logistic surroga
     limited by it, but 02_fetch_mlb_api.py should refresh schedule.parquet in the daily flow.
   - game_meta.parquet is only rebuilt by a full src/02 run() — the --today-only daily flow never
     adds today's rows, so it can sit weeks stale. The roster step now works around this (resolves
-    teams from probable_pitchers), but src/12's id2abbr map and other game_meta consumers would
-    still benefit from a lightweight daily game_meta refresh. Run a full src/02 (or backfill) to
-    bring game_meta current.
+    teams from probable_pitchers). src/12's id2abbr map still leans on it (works fine there since
+    src/12 is only run as part of a full rebuild anyway, alongside game_meta itself).
+    FIXED 2026-09-17: src/04_fetch_odds.py's build_yrfi_odds_table() ALSO depended on game_meta.
+    parquet for team_id -> abbr resolution — and game_meta.parquet isn't in the Streamlit Cloud
+    commit whitelist at all (never rebuilt by the daily flow, so never worth shipping stale). On
+    Cloud the file simply doesn't exist -> id2abbr stayed {} -> every game's game_pk lookup
+    returned None -> src/14's od.dropna(subset=["game_pk"]) then dropped every row of odds that
+    had just been fetched and saved successfully moments earlier, silently -> "first-inning market
+    odds: NOT AVAILABLE (model-only)" and every book-lines cell showed "—" on the hosted app, with
+    no error anywhere (the odds fetch itself "succeeded" — it just produced 100% NaN game_pks
+    downstream). Diagnosed via the hosted app's own "Manage app" logs, which required a prerequisite
+    fix first (see DASHBOARD's run_refresh() note below) since subprocess.run(capture_output=True)
+    was swallowing stdout/stderr on success, hiding the "Saved first-inning odds: 6 games..." line
+    that proved the fetch itself was fine. FIX: added a hardcoded TEAM_ID_TO_ABBR dict (the same
+    30-team map as src/03_fetch_weather.py's, copied rather than imported since numbered scripts
+    aren't importable modules — "03_..."/"04_..." aren't valid Python identifiers) as the primary
+    id2abbr source, with game_meta.parquet (if present) merged in on top as a supplement, not a
+    requirement. VERIFIED locally by moving game_meta.parquet aside (simulating Cloud's missing
+    file) and re-running the odds fetch: game_pk resolved for 4/6 games (was 0/6 before the fix);
+    the remaining 2 unresolved games (BOS@TEX, MIN@LAA on 2026-09-17) were simply missing from
+    probable_pitchers.parquet entirely that day — a separate, unrelated, transient data-freshness
+    gap (those 2 games' probable pitchers hadn't posted yet), not a code bug. Restored game_meta.
+    parquet and re-ran with it present too — same 4/6 result, confirming no regression either way.
+    Re-ran src/14 and confirmed "first-inning market odds: JOINED".
   - FUTURE ENHANCEMENT (noted 2026-09-17, not started): move bet_log storage to Google Sheets
     (via the `streamlit-gsheets` community connector) so bets logged directly on the hosted app
     persist durably, with no Streamlit Cloud redeploy side effect. Only worth building if hosted-

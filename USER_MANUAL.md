@@ -350,6 +350,23 @@ of 2026-09-14, but the model still needs the *real* file committed for BvP
 features to actually feed hosted predictions — a graceful fallback avoids a
 crash, it doesn't restore data quality.
 
+**If book lines show empty ("—") on the hosted app after a successful-looking
+Refresh slate (no error shown):** this happened for real on 2026-09-17.
+`src/04_fetch_odds.py` resolved each game's `game_pk` via `game_meta.parquet`
+for the odds table's team-abbreviation lookup — but `game_meta.parquet` isn't
+in the Cloud whitelist above, so on Cloud it doesn't exist, every lookup came
+back empty, every row's `game_pk` was `NaN`, and `src/14` then dropped all of
+them (`dropna(subset=["game_pk"])`) before predictions were built. The odds
+fetch itself succeeds and logs "Saved first-inning odds: N games" — the
+failure is invisible downstream. Fixed by giving `04_fetch_odds.py` its own
+hardcoded team_id → abbreviation table (no file dependency), so this no
+longer depends on `game_meta.parquet` existing at all. Diagnosing this
+required first fixing `run_refresh()` to print each step's stdout/stderr
+unconditionally (previously `subprocess.run(capture_output=True)` silently
+swallowed it whenever a step "succeeded," even into the hosted app's own
+"Manage app" logs) — if odds ever go empty again, check those logs for what
+each pipeline step actually printed before assuming it's a keys/quota issue.
+
 `.devcontainer/devcontainer.json` provides a Python 3.11 container for Codespaces
 / VS Code that installs `requirements.txt` and serves the app on port 8501.
 

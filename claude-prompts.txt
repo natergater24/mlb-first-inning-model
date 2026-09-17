@@ -1458,3 +1458,68 @@ FILES CHANGED: data/bet_log.csv (4 new rows, real historical bets — not test d
 place), claude-prompts.txt.
 DEPLOY: no code change this entry; the bet-log commits already pushed automatically via the
 existing auto-commit feature. Streamlit Cloud will show all 5 bets on its next redeploy.
+
+=== 2026-09-17 (Part 3) — FIX: HOSTED "REFRESH SLATE" LEFT ALL BOOK LINES EMPTY ===
+TASK: user reported that refreshing the slate on the hosted app left every book-lines cell empty
+("—"), with no visible error. Troubleshoot and fix.
+
+INVESTIGATION (real, not guessed):
+  1. Ran the odds fetch + full pipeline locally first — worked perfectly, book lines fully
+     populated, ruling out the pipeline/API keys/quota as a general problem.
+  2. User shared the hosted app URL (https://mlb-first-inning-model.streamlit.app/). Opened it
+     directly (logged in as owner via the existing browser session) and reproduced the bug live:
+     clicked Refresh slate, watched it complete with no error, confirmed via the app's own iframe
+     (had to navigate directly to the iframe's same-origin URL, `.../~/+/`, since mouse
+     wheel/keyboard scroll events sent to the outer Streamlit-Cloud wrapper page weren't reaching
+     the iframe, and get_page_text/read_page on the wrapper only ever saw "Manage app" — found via
+     `document.querySelectorAll('iframe')` in the JS console) that every book-lines cell was
+     genuinely "—" despite a fresh "checked" timestamp.
+  3. Checked the hosted app's own "Manage app" logs for the actual subprocess output — found
+     nothing useful, only Streamlit's own deprecation warnings. Root cause of THAT: run_refresh()
+     uses subprocess.run(..., capture_output=True), which captures the child step's stdout/stderr
+     into r.stdout/r.stderr — it never reaches the parent process's own stdout, so it never reaches
+     Cloud's log viewer either, REGARDLESS of whether the step succeeded or failed silently.
+  4. Fixed that first (prerequisite): run_refresh() now does
+     print(f"--- {label}: stdout ---\n{r.stdout}\n--- {label}: stderr ---\n{r.stderr}")
+     unconditionally for every step, success or failure. Deployed, waited for redeploy, re-ran
+     Refresh slate on the hosted app, and re-read the logs via the same iframe.contentDocument
+     approach — this time the real output was visible: "First-inning odds" step's stdout showed
+     "SGO first-inning: 48 book lines across 6 games... Saved first-inning odds: 6 games from
+     SportsGameOdds → yrfi_odds_2026-09-17.parquet" (the odds fetch had ACTUALLY SUCCEEDED), yet
+     the very next step's stdout ("YRFI predictions") said "first-inning market odds: NOT AVAILABLE
+     (model-only)". So the failure was between a successful odds fetch and src/14's read-back of
+     it, not in the odds fetch itself.
+  5. Read src/14_build_todays_yrfi.py's odds-join code: it loads yrfi_odds_{TODAY}.parquet, does
+     od.dropna(subset=["game_pk"]), and only treats odds as available if any rows survive. Read
+     src/04_fetch_odds.py's build_yrfi_odds_table(): it resolves each game's game_pk by mapping
+     team_id -> abbreviation via `id2abbr`, built ENTIRELY from game_meta.parquet (empty dict if
+     that file doesn't exist) -- if id2abbr is empty, every game_pk lookup returns None, so the
+     saved file has real odds/book-line columns but every row's game_pk is NaN, which src/14 then
+     drops entirely. Confirmed game_meta.parquet is NOT in the Streamlit Cloud commit whitelist
+     (`git ls-files | grep game_meta` -> nothing; `.gitignore` swallows it under `data/processed/*`
+     with no !negation) — it's never rebuilt by the --today-only daily flow, so it was correctly
+     never worth shipping stale, but nobody had noticed build_yrfi_odds_table() also secretly
+     depended on it until now. On Cloud the file plain doesn't exist -> id2abbr stays {} forever ->
+     100% of every day's odds silently get their game_pk wiped before src/14 ever sees them.
+
+FIX (src/04_fetch_odds.py): added a hardcoded TEAM_ID_TO_ABBR dict (all 30 teams — the exact same
+map already used successfully in src/03_fetch_weather.py; copied rather than imported, since
+numbered scripts like "03_fetch_weather" / "04_fetch_odds" aren't valid Python identifiers and
+can't be imported as modules) as id2abbr's primary source, with game_meta.parquet (if present)
+merged on top afterward as a supplement, not a requirement. No file dependency left in the
+critical path at all.
+
+VERIFIED locally end-to-end: moved game_meta.parquet aside (simulating its total absence on
+Cloud) and re-ran the odds fetch — game_pk resolved for 4/6 games (was 0/6 before the fix). The
+remaining 2 (BOS@TEX, MIN@LAA that day) were simply missing from probable_pitchers.parquet
+entirely — a separate, transient, unrelated data-freshness gap (those 2 games' probable pitchers
+hadn't posted yet that day), confirmed by cross-checking the live MLB schedule API directly (9
+real games that day, only 7 in probable_pitchers.parquet) — not a code bug, and out of scope for
+this fix. Restored game_meta.parquet and re-ran with it present too — same 4/6 result, no
+regression either way. Re-ran src/14 and confirmed "first-inning market odds: JOINED". Restarted
+local Streamlit and confirmed full book lines in-browser.
+FILES CHANGED: src/04_fetch_odds.py, app.py (the stdout/stderr diagnostic fix, committed
+separately first), claude-context.txt, claude-prompts.txt, USER_MANUAL.md.
+DEPLOY: two commits pushed to origin/main — the diagnostic fix first (needed to actually see the
+real error), then the game_meta-independence fix once the root cause was confirmed. Streamlit
+Cloud will pick both up on its next redeploy.

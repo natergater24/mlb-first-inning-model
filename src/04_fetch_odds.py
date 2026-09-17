@@ -889,7 +889,21 @@ def build_yrfi_odds_table(date_str: str) -> pd.DataFrame:
     # map to game_pk via probable_pitchers
     pp_path = BASE_DIR / "data" / "processed" / "probable_pitchers.parquet"
     gm_path = BASE_DIR / "data" / "processed" / "game_meta.parquet"
-    id2abbr = {}
+    # Canonical team_id -> abbr (same map as src/03_fetch_weather.py's TEAM_ID_TO_ABBR).
+    # game_meta.parquet is NOT in the Streamlit Cloud commit whitelist (it's only ever
+    # rebuilt by a full src/02 run(), so the daily flow never refreshes it) -- on Cloud
+    # the file doesn't exist at all, id2abbr stayed {} forever, every game_pk lookup
+    # below returned None, and src/14's dropna(subset=["game_pk"]) then silently
+    # dropped every row, producing "first-inning market odds: NOT AVAILABLE" even
+    # though this function had just fetched and saved real odds moments earlier.
+    # This dict has no file dependency, so it's always available on every platform.
+    id2abbr = {
+        108: "LAA", 109: "ARI", 110: "BAL", 111: "BOS", 112: "CHC", 113: "CIN",
+        114: "CLE", 115: "COL", 116: "DET", 117: "HOU", 118: "KC", 119: "LAD",
+        120: "WSH", 121: "NYM", 133: "OAK", 134: "PIT", 135: "SD", 136: "SEA",
+        137: "SF", 138: "STL", 139: "TB", 140: "TEX", 141: "TOR", 142: "MIN",
+        143: "PHI", 144: "ATL", 145: "CWS", 146: "MIA", 147: "NYY", 158: "MIL",
+    }
     if gm_path.exists():
         gm = pd.read_parquet(gm_path)
         for _, r in gm.iterrows():
