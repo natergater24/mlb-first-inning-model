@@ -1523,3 +1523,20 @@ separately first), claude-context.txt, claude-prompts.txt, USER_MANUAL.md.
 DEPLOY: two commits pushed to origin/main — the diagnostic fix first (needed to actually see the
 real error), then the game_meta-independence fix once the root cause was confirmed. Streamlit
 Cloud will pick both up on its next redeploy.
+
+=== 2026-09-17 (Part 4) — NOTED (NOT BUILT): "WHY THIS EDGE" BLURB ===
+User requested a new feature — a brief 1-2 sentence explanation per game naming the specific
+pitchers/hitters who are the biggest contributors to that game's NRFI/YRFI lean — but is near
+their usage limit, so asked to save it as a scoped future project rather than implement now.
+Wrote a full spec into claude-context.txt (new section right after FUTURE PROJECT — PER-PITCH
+BATTED-BALL MODEL): where it would surface (detail view Section 1, maybe a shorter card-level
+version later), what data already exists to build it (per-game contrib_<group> attribution from
+the existing logistic surrogate + named pitcher/batter stat columns already computed per game —
+no new model or training needed, this is a presentation-layer feature), a recommended
+heuristic/templated approach (find the 1-2 dominant contrib_<group>s, then within each pick the
+specific named entity whose stat is most extreme vs. league average, template into 1-2
+sentences), and open questions to resolve when picking it up (exact wording/tone, what to show
+for NO EDGE games, whether ballpark/weather ever headline vs. always deferring to a named
+player). No code changed this entry.
+FILES CHANGED: claude-context.txt, claude-prompts.txt.
+DEPLOY: none — planning/notes only, nothing to redeploy.

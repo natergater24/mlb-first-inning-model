@@ -593,6 +593,69 @@ placeholder callout in the home-team Top-of-Order section. MORE DETAIL TO COME.
 Keep it strictly separated from the trained YRFI RandomForest + logistic surrogate — the
 "YOUR WEIGHTING" sliders and every probability/edge/EV in the app come only from that model.
 
+=== FUTURE PROJECT (requested 2026-09-17, not started) — "WHY THIS EDGE" BLURB ===
+User wants a brief 1-2 sentence, plain-English explanation on each game naming the SPECIFIC
+pitchers/hitters who are the biggest contributors to that game's NRFI/YRFI lean — not just "the
+model favors NRFI at 62%" but e.g. "Pitcher X's .180 NRFI rate anchors this NRFI lean; Batter Y's
+hot L7 form (.410 OBP) is the main pushback." Deferred (user near usage limit) — this note is the
+full spec + a recommended approach so a future session can start straight into implementation.
+
+WHERE IT WOULD SURFACE:
+  - Detail view: a new line/callout in section_prediction() (Section 1), near the Best Bet box.
+  - Landing card: maybe a shorter one-liner under the recommendation badge/edge row in
+    game_card() — real estate is tighter there, so possibly detail-view-only for v1.
+
+WHAT DATA ALREADY EXISTS TO BUILD THIS (no new model or training needed — this is a presentation-
+layer / explainability feature over data the model already computed):
+  - Per-game GROUP-level attribution already exists: contrib_<group> columns in
+    todays_yrfi_predictions.parquet (pitcher_nrfi_record, pitcher_stuff, pitcher_last5,
+    lineup_offense, lineup_recent_form, ballpark, weather) + base_model_logit — this is exactly
+    "how much log-odds did each factor group contribute," produced by the logistic surrogate
+    trained in src/13 (see the ⚙️ Model weighting expander notes under DASHBOARD/LANDING above for
+    the full mechanism). This tells you WHICH group dominates the edge for a given game, but not
+    which NAMED player within that group to credit.
+  - Named-entity stats already computed per game (used elsewhere in the dashboard, so already
+    present on the row or in the supporting parquets): home/away pitcher name + career/season/L5
+    NRFI%, 1st-inn ERA, K rate, BB rate, hard-hit% allowed, first-pitch-strike rate, velo; away/
+    home projected top-5 batters + BvP OBP, L7/L30 OBP, season HR/PA, hard-hit%, power score.
+
+RECOMMENDED APPROACH (v1, heuristic/templated — NOT an LLM call per game; deterministic, no
+hallucination risk, no added latency/cost for 10+ games/day):
+  1. For the game, find the 1-2 largest-|contrib_<group>| groups (the ones already driving the
+     model's own lean, consistent with what "YOUR WEIGHTING"'s effective-weighting bar already
+     shows — reuse that logic/labels rather than inventing new ones).
+  2. Per dominant group, look up which SPECIFIC named entity to credit by comparing the two
+     relevant sides' underlying stat and picking whichever is most extreme vs. league average:
+       pitcher_nrfi_record / pitcher_stuff / pitcher_last5 -> compare home vs away pitcher's
+         relevant stat (NRFI%, hard-hit%/K%/velo, last-5 trend respectively), name whichever
+         pitcher is more extreme.
+       lineup_offense / lineup_recent_form -> compare home vs away team's top-5 aggregate (BvP/
+         power score, or L7/L30 OBP respectively), and drill into that team's specific top-5
+         batter with the most extreme individual value to name by name.
+       ballpark / weather -> no single "player" to name; phrase these as park/weather factors
+         instead (e.g. "the dome neutral park factor..." isn't a great fit for a player-named
+         blurb — probably only surface these two groups when they're the ONLY dominant factor,
+         otherwise prefer naming a pitcher/hitter from a personnel group if it's close).
+  3. Small per-group template -> 1 sentence each, combine top 1-2 into the final 1-2 sentence
+     blurb. Needs actual copywriting/tone work when this gets picked up — this note only specifies
+     the mechanism, not final wording.
+  4. Where to compute: recommend doing this LIVE in app.py at render time (a new small helper
+     function, e.g. _why_this_edge(r)), NOT baked into src/14's output columns — every input it
+     needs (contrib_<group>, pitcher/batter stat columns) is already on the row or one dataframe
+     lookup away, it's cheap arithmetic (no API calls), and keeping it presentation-layer avoids
+     touching the model/training pipeline or adding new parquet schema/versioning concerns.
+
+OPEN QUESTIONS TO RESOLVE WHEN PICKING THIS UP:
+  - Exact tone/wording — templated sentences will need real drafting/iteration, not just "insert
+    numbers into a format string."
+  - What to show for "NO EDGE" games (no single dominant factor) — skip the blurb, or say
+    something like "a close matchup with no single dominant factor"?
+  - Whether ballpark/weather ever get to be the HEADLINE reason, or always deferred to a pitcher/
+    hitter name when one is even remotely close in contribution (probably more satisfying to read
+    — "biggest contributors" as the user asked for implies named people, not park factors).
+  - Card-level (short) version vs. detail-view-only for v1 — start with detail view, expand to
+    cards later if it reads well.
+
 === OUTSTANDING / NEXT STEPS ===
   - RECURRING: run src/backfill_feeds.py + src/02 --build-lineup-history weekly (or fold recent
     completed feeds into the daily flow) so lineup_position_summary + batter_game_logs stay
@@ -633,6 +696,13 @@ Keep it strictly separated from the trained YRFI RandomForest + logistic surroga
     persist durably, with no Streamlit Cloud redeploy side effect. Only worth building if hosted-
     side logging (away from the local machine) actually becomes needed — see BET TRACKER's
     HOSTED-SIDE PERSISTENCE note above for the full comparison against a GitHub API write-back.
+  - FUTURE PROJECT (requested 2026-09-17, not started) — "WHY THIS EDGE" BLURB: a 1-2 sentence,
+    plain-English explanation per game naming the specific pitchers/hitters driving that game's
+    NRFI/YRFI lean (not just the probability/edge numbers already shown). Full spec + a
+    recommended heuristic/templated approach (uses existing contrib_<group> attribution + named
+    player stats already computed per game — no new model/training needed) written up in its own
+    section right after FUTURE PROJECT — PER-PITCH BATTED-BALL MODEL above. Deferred (user near
+    usage limit) — pick up there.
   - Consider point-in-time pitcher NRFI aggregates to remove the look-ahead bias in training.
   - Optional: switch calibration to sigmoid if isotonic plateaus stay too coarse.
   - FUTURE (own section above): per-pitch batted-ball model, shown alongside — not inside — the
