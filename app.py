@@ -218,6 +218,13 @@ def run_refresh():
             st.write(f"→ {label}")
             r = subprocess.run(caffeinate + [sys.executable] + args, cwd=ROOT,
                                capture_output=True, text=True)
+            # subprocess.run(capture_output=True) swallows the child's stdout/stderr into
+            # r.stdout/r.stderr -- it never reaches this process's own stdout, so on Cloud
+            # it never reaches the "Manage app" log viewer either, EVEN ON SUCCESS. Print it
+            # unconditionally so a step that exits 0 but silently did nothing useful (e.g. a
+            # missing API key logged as a warning, not an error) is still visible in the logs.
+            print(f"--- {label}: stdout ---\n{r.stdout}\n--- {label}: stderr ---\n{r.stderr}",
+                  flush=True)
             if r.returncode != 0:
                 st.error(f"{label} failed:\n{r.stderr[-1500:]}")
                 status.update(label="Refresh failed", state="error")
