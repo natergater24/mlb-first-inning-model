@@ -1540,3 +1540,20 @@ for NO EDGE games, whether ballpark/weather ever headline vs. always deferring t
 player). No code changed this entry.
 FILES CHANGED: claude-context.txt, claude-prompts.txt.
 DEPLOY: none — planning/notes only, nothing to redeploy.
+
+=== 2026-09-17 (Part 5) — REFINED (STILL NOT BUILT): "WHY THIS EDGE" BLURB SPEC ===
+Follow-up to Part 4's spec, same session. User clarified: naming a specific batter-vs-pitcher
+matchup should NOT be a requirement — only do it when the historical BvP matchup (or a pitcher
+stat) is actually significant (real sample size + an extreme value), otherwise the blurb should
+just say which of the 1-2 dominant contributing groups explain the lean, with no player named.
+Updated claude-context.txt's "WHY THIS EDGE" BLURB spec to a two-tier design: (1) default/
+fallback = name the dominant contrib_<group>(s) only, using the same GROUP_LABELS wording the
+⚙️ weighting sliders already use; (2) upgrade = only when a pitcher stat or BvP matchup clears a
+significance bar (reusing the existing small-sample thresholds/badges already used elsewhere in
+the dashboard — GS/starts count for pitcher stats, the "🚫 no matchup data" / "⚠️ small sample"
+PA thresholds for BvP) does it name that specific player/matchup instead. Also updated the open-
+questions list (dropped the now-resolved "should ballpark/weather ever headline" question, added
+"pick the actual significance thresholds" as the concrete remaining open question) and the short
+OUTSTANDING/NEXT STEPS pointer to match. No code changed — still planning/notes only.
+FILES CHANGED: claude-context.txt, claude-prompts.txt.
+DEPLOY: none.

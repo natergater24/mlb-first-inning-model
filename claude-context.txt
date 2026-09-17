@@ -594,11 +594,18 @@ Keep it strictly separated from the trained YRFI RandomForest + logistic surroga
 "YOUR WEIGHTING" sliders and every probability/edge/EV in the app come only from that model.
 
 === FUTURE PROJECT (requested 2026-09-17, not started) — "WHY THIS EDGE" BLURB ===
-User wants a brief 1-2 sentence, plain-English explanation on each game naming the SPECIFIC
-pitchers/hitters who are the biggest contributors to that game's NRFI/YRFI lean — not just "the
-model favors NRFI at 62%" but e.g. "Pitcher X's .180 NRFI rate anchors this NRFI lean; Batter Y's
-hot L7 form (.410 OBP) is the main pushback." Deferred (user near usage limit) — this note is the
-full spec + a recommended approach so a future session can start straight into implementation.
+User wants a brief 1-2 sentence, plain-English explanation on each game for that game's NRFI/YRFI
+lean — not just "the model favors NRFI at 62%" but why. Deferred (user near usage limit) — this
+note is the full spec + a recommended approach so a future session can start straight into
+implementation.
+REFINED 2026-09-17 (same day, follow-up): naming a specific batter-vs-pitcher matchup is NOT a
+requirement — only do it when the historical BvP matchup is actually significant (a real sample
+size AND an extreme value, not just whoever happens to have the highest number on a handful of
+PA). Otherwise the blurb should just say which of the 1-2 dominant contributing GROUPS explain
+the lean (e.g. "driven mainly by the pitching matchup and recent lineup form"), with no player
+named at all. So there are effectively two tiers of output: (1) default/fallback — name the
+dominant group(s) only; (2) upgrade — if a specific pitcher stat or BvP matchup clears a
+significance bar, name that player/matchup instead of (or alongside) the group description.
 
 WHERE IT WOULD SURFACE:
   - Detail view: a new line/callout in section_prediction() (Section 1), near the Best Bet box.
@@ -624,22 +631,30 @@ hallucination risk, no added latency/cost for 10+ games/day):
   1. For the game, find the 1-2 largest-|contrib_<group>| groups (the ones already driving the
      model's own lean, consistent with what "YOUR WEIGHTING"'s effective-weighting bar already
      shows — reuse that logic/labels rather than inventing new ones).
-  2. Per dominant group, look up which SPECIFIC named entity to credit by comparing the two
-     relevant sides' underlying stat and picking whichever is most extreme vs. league average:
-       pitcher_nrfi_record / pitcher_stuff / pitcher_last5 -> compare home vs away pitcher's
-         relevant stat (NRFI%, hard-hit%/K%/velo, last-5 trend respectively), name whichever
-         pitcher is more extreme.
-       lineup_offense / lineup_recent_form -> compare home vs away team's top-5 aggregate (BvP/
-         power score, or L7/L30 OBP respectively), and drill into that team's specific top-5
-         batter with the most extreme individual value to name by name.
-       ballpark / weather -> no single "player" to name; phrase these as park/weather factors
-         instead (e.g. "the dome neutral park factor..." isn't a great fit for a player-named
-         blurb — probably only surface these two groups when they're the ONLY dominant factor,
-         otherwise prefer naming a pitcher/hitter from a personnel group if it's close).
-  3. Small per-group template -> 1 sentence each, combine top 1-2 into the final 1-2 sentence
-     blurb. Needs actual copywriting/tone work when this gets picked up — this note only specifies
-     the mechanism, not final wording.
-  4. Where to compute: recommend doing this LIVE in app.py at render time (a new small helper
+  2. DEFAULT OUTPUT (no significance bar to clear): just name the dominant group(s) using the
+     existing GROUP_LABELS / DEFAULT_LABELS wording already used by the weighting sliders (e.g.
+     "Pitcher NRFI track record" / "Lineup recent form") — no specific player required. This is
+     the fallback for the common case and should look genuinely fine on its own, not like a
+     degraded version of the "real" blurb.
+  3. UPGRADE (only when significant): within a dominant PERSONNEL group (pitcher_nrfi_record/
+     pitcher_stuff/pitcher_last5/lineup_offense/lineup_recent_form — not ballpark/weather, which
+     never get a named "player"), check whether a specific pitcher stat or BvP matchup clears a
+     real significance bar before naming it:
+       - Pitcher-level stats (NRFI%, hard-hit%, last-5 trend): need a minimum start count (the
+         model already flags small samples elsewhere — reuse whatever GS/starts threshold pattern
+         section_pitcher already uses) AND a genuinely extreme value vs. league average, not just
+         "higher than the other guy" by a trivial margin.
+       - BvP-specific matchups: need a real PA sample (reuse the existing "🚫 no matchup data at 0
+         PA" / "⚠️ small sample under 5 PA" thresholds already used in section_batters — do NOT
+         name a BvP number built on a handful of PA) AND an extreme OBP/AVG in that sample.
+     If (and only if) a specific stat/matchup clears its bar, name that pitcher or batter-vs-
+     pitcher matchup instead of (or alongside) the plain group description. If nothing clears the
+     bar, fall back to step 2's group-only phrasing — never force a name onto a thin sample just
+     to sound more specific.
+  4. Small per-group + per-tier template -> 1 sentence each, combine top 1-2 into the final 1-2
+     sentence blurb. Needs actual copywriting/tone work when this gets picked up — this note only
+     specifies the mechanism, not final wording.
+  5. Where to compute: recommend doing this LIVE in app.py at render time (a new small helper
      function, e.g. _why_this_edge(r)), NOT baked into src/14's output columns — every input it
      needs (contrib_<group>, pitcher/batter stat columns) is already on the row or one dataframe
      lookup away, it's cheap arithmetic (no API calls), and keeping it presentation-layer avoids
@@ -650,9 +665,10 @@ OPEN QUESTIONS TO RESOLVE WHEN PICKING THIS UP:
     numbers into a format string."
   - What to show for "NO EDGE" games (no single dominant factor) — skip the blurb, or say
     something like "a close matchup with no single dominant factor"?
-  - Whether ballpark/weather ever get to be the HEADLINE reason, or always deferred to a pitcher/
-    hitter name when one is even remotely close in contribution (probably more satisfying to read
-    — "biggest contributors" as the user asked for implies named people, not park factors).
+  - Exact significance thresholds for the "upgrade" tier (min starts for a pitcher stat, min PA
+    for a BvP matchup, how extreme vs. league average counts as "extreme") — the 2026-09-17
+    refinement made naming a player conditional rather than required, but the actual cutoff
+    numbers still need to be picked when this is built.
   - Card-level (short) version vs. detail-view-only for v1 — start with detail view, expand to
     cards later if it reads well.
 
@@ -697,12 +713,14 @@ OPEN QUESTIONS TO RESOLVE WHEN PICKING THIS UP:
     side logging (away from the local machine) actually becomes needed — see BET TRACKER's
     HOSTED-SIDE PERSISTENCE note above for the full comparison against a GitHub API write-back.
   - FUTURE PROJECT (requested 2026-09-17, not started) — "WHY THIS EDGE" BLURB: a 1-2 sentence,
-    plain-English explanation per game naming the specific pitchers/hitters driving that game's
-    NRFI/YRFI lean (not just the probability/edge numbers already shown). Full spec + a
-    recommended heuristic/templated approach (uses existing contrib_<group> attribution + named
-    player stats already computed per game — no new model/training needed) written up in its own
-    section right after FUTURE PROJECT — PER-PITCH BATTED-BALL MODEL above. Deferred (user near
-    usage limit) — pick up there.
+    plain-English explanation per game for that game's NRFI/YRFI lean (not just the probability/
+    edge numbers already shown). NOT required to name a specific batter-vs-pitcher matchup —
+    default is to just name which of the 1-2 dominant contributing GROUPS explain the lean; only
+    name a specific player/matchup when it clears a real significance bar (meaningful sample size
+    AND an extreme value). Full spec + a recommended two-tier heuristic/templated approach (uses
+    existing contrib_<group> attribution + named player stats already computed per game — no new
+    model/training needed) written up in its own section right after FUTURE PROJECT — PER-PITCH
+    BATTED-BALL MODEL above. Deferred (user near usage limit) — pick up there.
   - Consider point-in-time pitcher NRFI aggregates to remove the look-ahead bias in training.
   - Optional: switch calibration to sigmoid if isotonic plateaus stay too coarse.
   - FUTURE (own section above): per-pitch batted-ball model, shown alongside — not inside — the
