@@ -1116,8 +1116,24 @@ def _money(v) -> str:
     return f"{'−' if v < 0 else '+'}${abs(v):,.0f}"
 
 
+def _is_hosted() -> bool:
+    """Best-effort "are we running on Streamlit Cloud, not the local Mac" check.
+    Reuses run_refresh()'s own caffeinate-presence signal (this project's local
+    dev machine is always the same macOS box with caffeinate on PATH; Streamlit
+    Cloud's Linux container never has it) rather than inventing a second one."""
+    return shutil.which("caffeinate") is None
+
+
 def tracker_bar():
     """Top-of-page bankroll tracker + bet log. Shown on every view."""
+    if _is_hosted():
+        st.warning(
+            "⚠️ **This is the hosted app** — bets logged here only live in this "
+            "session and are lost the next time the app reboots or redeploys. "
+            "**Log and edit bets from the local app instead.**"
+        )
+        st.link_button("🖥️ Open local app (localhost:8501)", "http://localhost:8501")
+
     try:
         df = bt.load_bets()
     except bt.BetLogAccessError as e:

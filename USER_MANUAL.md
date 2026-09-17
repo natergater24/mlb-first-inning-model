@@ -233,17 +233,23 @@ see the 2026-09-16 entry in `claude-prompts.txt`.) `bet_tracker.load_bets()` /
 `save_bets()` isolate storage, so a GitHub-API write-back or a real database
 could replace the CSV without touching `app.py`'s call sites.
 
-**Logging bets on the hosted app itself (not yet implemented):** options
-considered 2026-09-16 — (1) GitHub Contents API write-back on every bet
-(minimal change, reuses the CSV/git model, but each hosted-side bet triggers
-a real commit and a Streamlit Cloud redeploy of the whole app); (2) move
-storage to an external store (Google Sheets via `streamlit-gsheets`, or a
-small hosted DB like Supabase) that both the local and hosted app read/write
-via API — no redeploy side effect, handles concurrent writes safely, but
-needs a new account/credentials and a rewrite of `load_bets()`/`save_bets()`.
-Community Cloud's free tier has no persistent disk, so neither a local SQLite
-file nor "just don't lose the ephemeral filesystem" is an option. Pending a
-decision on which to build.
+**Decision (2026-09-17): stick with the local-only workflow.** Two options were
+considered for durable hosted-side logging — (1) GitHub Contents API
+write-back on every bet (small change, but each hosted-side bet would trigger
+a real commit and a full Streamlit Cloud redeploy of the app) and (2) an
+external store like Google Sheets or a small hosted DB (no redeploy side
+effect, but needs a new Google Cloud project + service account + credential,
+more setup). Neither was built — logging stays **local-app-only**. Google
+Sheets is noted as a **possible future enhancement** if hosted-side logging
+is ever needed (see claude-context.txt).
+
+**Hosted-app reminder banner (added 2026-09-17):** `tracker_bar()` in `app.py`
+now shows a warning + a "🖥️ Open local app (localhost:8501)" link button at
+the very top of every hosted-app page, so this can't quietly happen again.
+`_is_hosted()` reuses the same `shutil.which("caffeinate") is None` signal
+`run_refresh()` already uses to tell the Mac apart from Streamlit Cloud's
+Linux container — the banner is suppressed entirely on the local app (it
+only ever shows on the hosted deployment).
 
 ---
 

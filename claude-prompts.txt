@@ -1383,3 +1383,42 @@ credentials, not something inferable from context:
 FILES CHANGED: bet_tracker.py, app.py, USER_MANUAL.md, claude-context.txt, claude-prompts.txt.
 DEPLOY: committed and pushed to origin/main (the auto-commit code itself; no bet_log.csv change
 in this commit — it's still just the single seed row, confirmed unchanged before pushing).
+
+=== 2026-09-17 — HOSTED-SIDE PERSISTENCE: DECISION + REMINDER BANNER (Google Sheets deferred) ===
+TASK: follow-up to the 2026-09-16 lost-bets incident. After walking through the GitHub API
+write-back logistics and a side-by-side comparison table against Google Sheets, the user asked
+whether I could build the Google Sheets option directly in their Google Cloud. Checked: no Google
+Cloud/Sheets connector attached to this session (session_connectors_status showed only Claude
+Docs, visualize, scheduled-tasks), and no local `gcloud` CLI installed either — so there was no
+safe automated path to provision it even if I'd wanted to. Declined to do the GCP-console clicking
+via claude-in-chrome on principle even though that tool is available: creating a GCP project,
+enabling the Sheets API, creating a service account, and downloading its private key are
+account-configuration and credential-handling steps, the same class of mistake (a mishandled
+credential file) that caused the real env.txt key leak earlier in this project (Part 13). Told the
+user plainly rather than attempting it via screen automation.
+
+DECISION: stick with the existing local-only workflow (local logging + 2026-09-16's auto-commit).
+Neither GitHub write-back nor Google Sheets gets built right now. Google Sheets is saved as a
+possible future enhancement (noted in claude-context.txt's OUTSTANDING / NEXT STEPS) in case
+hosted-side logging away from the local machine is ever actually needed.
+
+MITIGATION BUILT INSTEAD — hosted-app reminder banner:
+  - app.py: new _is_hosted() — reuses run_refresh()'s own `shutil.which("caffeinate") is None`
+    signal (the local dev Mac always has caffeinate on PATH; Streamlit Cloud's Linux container
+    never does) rather than inventing a second detection mechanism.
+  - tracker_bar() now opens with, when _is_hosted() is true: a st.warning explaining that hosted
+    bets don't survive a reboot/redeploy, plus a "🖥️ Open local app (localhost:8501)"
+    st.link_button — both render at the very top of every page on the hosted app, before the
+    summary bar, so they can't be missed at the exact point someone would otherwise reach for the
+    hosted "Track a Bet" / "Log a Bet" forms. Suppressed entirely on the local app.
+VERIFIED: called _is_hosted() directly (returned False locally, as expected — caffeinate is on
+PATH on this Mac). Restarted local Streamlit and confirmed in-browser via screenshot that the
+banner is correctly absent on the local app (no regression) — the "hosted true" branch wasn't
+exercised live since that only reproduces on the actual Cloud container, but the two Streamlit
+calls behind that branch (st.warning, st.link_button) are both already proven patterns used
+elsewhere in this exact file.
+FILES CHANGED: app.py, README.md, USER_MANUAL.md, claude-context.txt, claude-prompts.txt.
+DEPLOY: committed and pushed to origin/main so the banner appears on the hosted app.
+NEXT: user wants to manually re-log the bets lost in the 2026-09-16 incident once this is
+confirmed deployed — they'll do this from the local app now that the banner + auto-commit are
+both live, so those re-entered bets will persist and reach the hosted site on next redeploy.

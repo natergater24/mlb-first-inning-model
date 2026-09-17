@@ -298,21 +298,47 @@ function returned normally, AND the local commit still happened before the faile
 fully offline, git history captures the change locally; a later successful push or launch.sh run
 picks it up). app.py's bet-log caption updated to describe the new auto-push instead of only
 "published each morning by launch.sh".
-NOT YET DONE — HOSTED-SIDE PERSISTENCE: user asked for options to log bets durably from the
-hosted app itself, not just locally. Menu presented (none built yet, pending user's choice):
-  (1) GitHub Contents API write-back on every hosted bet (small change, reuses the CSV/git model
-      exactly as bet_tracker.py's docstring always intended — "so a GitHub-API write-back can be
-      added later without touching app.py") — but every hosted-side bet action becomes a real
-      commit, which triggers a full Streamlit Cloud redeploy of the app (Cloud watches the repo);
-      also a bare-CSV-in-git approach doesn't handle concurrent local+hosted writes safely.
+HOSTED-SIDE PERSISTENCE — DECIDED 2026-09-17: staying with the local-only workflow. Two options
+were compared (table given to the user: scope to build / manual setup / ease of use / whether
+local vs. hosted logging persists automatically):
+  (1) GitHub Contents API write-back on every hosted bet — smaller build (~1-2 hrs), reuses the
+      CSV/git model exactly as bet_tracker.py's docstring always intended ("so a GitHub-API
+      write-back can be added later without touching app.py"), setup is just one fine-grained PAT
+      as a Streamlit secret. But every hosted-side bet action becomes a real commit, which
+      triggers a full Streamlit Cloud redeploy of the app (Cloud watches the repo) — a visible
+      restart after every hosted bet; the token also expires and needs periodic renewal; a
+      bare-CSV-in-git approach doesn't handle concurrent local+hosted writes cleanly (GitHub
+      rejects a stale-sha write instead of silently clobbering, but nothing auto-retries).
   (2) Move storage off flat-file-in-git entirely to an external store both local and hosted read/
       write via API — Google Sheets (`streamlit-gsheets` community connector: free, human-
       viewable/editable outside the app too, no redeploy side effect) or a small hosted DB
-      (Supabase/Postgres, similar tradeoffs). Bigger change: rewrites load_bets()/save_bets()
-      internals (call sites in app.py stay the same, by design) and needs a new account/credential
-      stored as a Streamlit secret.
+      (Supabase/Postgres, similar tradeoffs). Bigger build (~3-4 hrs): rewrites load_bets()/
+      save_bets() internals (call sites in app.py stay the same, by design). Setup is heavier —
+      a Google Cloud project, a service account, enabling the Sheets API, downloading a private
+      key, sharing the sheet with the service account's email — all steps I explicitly declined to
+      run myself via browser automation even though claude-in-chrome could technically click
+      through the console: creating a GCP project/service account and downloading a credential
+      file are account-configuration and credential-handling actions, the same class of mistake
+      that caused the real env.txt key leak earlier in this project (Part 13). No Google Cloud
+      connector or local `gcloud` CLI was available in-session either (checked both), so there was
+      no safe automated path regardless.
   Streamlit Community Cloud's free tier has no persistent disk at all, so "just don't wipe the
-  ephemeral filesystem" and "drop in a local SQLite file" are not options on this host.
+  ephemeral filesystem" and "drop in a local SQLite file" were never options on this host.
+  DECISION: keep the existing local-first workflow (local logging + 2026-09-16's auto-commit) and
+  do NOT build either option now. Google Sheets is noted as a FUTURE ENHANCEMENT if hosted-side
+  logging is ever actually needed (e.g. logging bets while away from the local machine) — GitHub
+  write-back was not preferred as the eventual answer given the redeploy-on-every-bet cost, but
+  wasn't ruled out either.
+  MITIGATION BUILT INSTEAD (2026-09-17): app.py gained _is_hosted() (reuses run_refresh()'s own
+  `shutil.which("caffeinate") is None` signal — this project's local dev machine is always the
+  same macOS box with caffeinate on PATH, Streamlit Cloud's Linux container never has it, so no
+  new detection mechanism was needed) and tracker_bar() now renders a st.warning + a
+  "🖥️ Open local app (localhost:8501)" st.link_button at the very top of EVERY page, but only
+  when _is_hosted() is true — verified locally that the banner is correctly absent there (browser
+  screenshot, caffeinate present -> _is_hosted() False) before deploying. This doesn't make hosted
+  logging durable; it just makes it much harder to accidentally repeat the 2026-09-16 incident by
+  putting the "log locally instead" reminder + a direct link where it can't be missed, right at
+  the point someone would otherwise reach for the hosted "Track a Bet" / "Log a Bet" UI.
 UPDATED 2026-09-14: load_bets()/save_bets() no longer crash on a bet_log.csv access failure
 (e.g. macOS Full Disk Access not granted to Terminal for the Desktop-nested project path — file
 Unix perms were already correct at 644, this is a TCC sandboxing issue, not chmod-fixable).
@@ -572,6 +598,11 @@ Keep it strictly separated from the trained YRFI RandomForest + logistic surroga
     teams from probable_pitchers), but src/12's id2abbr map and other game_meta consumers would
     still benefit from a lightweight daily game_meta refresh. Run a full src/02 (or backfill) to
     bring game_meta current.
+  - FUTURE ENHANCEMENT (noted 2026-09-17, not started): move bet_log storage to Google Sheets
+    (via the `streamlit-gsheets` community connector) so bets logged directly on the hosted app
+    persist durably, with no Streamlit Cloud redeploy side effect. Only worth building if hosted-
+    side logging (away from the local machine) actually becomes needed — see BET TRACKER's
+    HOSTED-SIDE PERSISTENCE note above for the full comparison against a GitHub API write-back.
   - Consider point-in-time pitcher NRFI aggregates to remove the look-ahead bias in training.
   - Optional: switch calibration to sigmoid if isotonic plateaus stay too coarse.
   - FUTURE (own section above): per-pitch batted-ball model, shown alongside — not inside — the

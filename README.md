@@ -69,6 +69,14 @@ and the hosted Cloud container — it previously hardcoded a macOS-only Python p
 unconditionally shelled out to `caffeinate`, which crashed the hosted app with a
 `FileNotFoundError` the first time anyone clicked it there (fixed 2026-09-14).
 
+**Bet logging stays local-only.** The hosted app has no git push credentials, so a bet logged
+there only lives in that session's ephemeral filesystem and is lost on the next reboot/redeploy
+(this happened for real once — see `claude-prompts.txt`, 2026-09-16). `tracker_bar()` now shows a
+warning + a direct "Open local app" link at the top of every hosted-app page (`_is_hosted()`
+reuses the same caffeinate-presence check as `run_refresh()`) so this can't be missed. A Google
+Sheets–backed storage layer would make hosted-side logging durable and is noted as a possible
+future enhancement in `claude-context.txt`, not built.
+
 ## Project Structure
 - src/ — all pipeline scripts numbered 01-14
 - app.py — Streamlit dashboard
