@@ -1,2 +1,3 @@
 bet_id,placed_at,game_pk,game_date,game_start,away_team,home_team,side,book,odds,units,unit_size,status,first_inn_runs,graded_at,result_units
 seed00000001,2026-09-09T17:00:00+00:00,824956,2026-09-09,2026-09-09T19:05:00Z,TOR,ATH,NRFI,FanDuel,100.0,1.0,25.0,won,0,2026-09-09T23:30:00+00:00,1.0
+cee5e46566ce,2026-09-17T17:51:28+00:00,824386,2026-09-14,2026-09-14T22:40:00Z,CWS,CLE,YRFI,FanDuel,140.0,1.0,25.0,open,,,
