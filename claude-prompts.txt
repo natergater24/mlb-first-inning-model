@@ -1422,3 +1422,39 @@ DEPLOY: committed and pushed to origin/main so the banner appears on the hosted 
 NEXT: user wants to manually re-log the bets lost in the 2026-09-16 incident once this is
 confirmed deployed — they'll do this from the local app now that the banner + auto-commit are
 both live, so those re-entered bets will persist and reach the hosted site on next redeploy.
+
+=== 2026-09-17 (Part 2) — MANUALLY RE-LOGGED THE 4 BETS LOST IN THE 09-16 INCIDENT ===
+TASK: user identified that the app's bet-logging UI only works for games on today's slate
+(both the landing-page "Log a Bet" and detail-view "Track a Bet" forms iterate
+todays_yrfi_predictions.parquet) — there's no UI path to log a bet against a past date's game, so
+the bets lost in the 2026-09-16 hosted-app incident couldn't be re-entered normally. User provided
+date/matchup/side/book/odds/stake/outcome for 4 bets; asked me to fill in the rest and get them
+fully into the bet log.
+
+PROCESS: looked up the real MLB Stats API schedule for 2026-09-14 and 2026-09-15 to resolve the
+correct game_pk + first-pitch time for each matchup (not guessed), then independently fetched each
+game's real linescore to confirm the actual 1st-inning result BEFORE trusting the user's stated
+win/loss — all 4 games came back 0-0 in the 1st (NRFI), which matched every one of the user's
+stated outcomes exactly. Inserted via bt.add_bet() (not a hand-built CSV row) so bet_id/game_start
+resolution/schema all go through the same code path as any other bet, then called
+bt.grade_open_bets() once so status/first_inn_runs/result_units are computed by the exact same
+logic that grades every other bet, rather than hand-calculating and risking a mismatch:
+  1. CWS@CLE 09-14 (824386), YRFI, FanDuel, +140, 1u -> lost, -1.0000u
+  2. LAD@CIN 09-14 (824465), YRFI, FanDuel, +118, 1u -> lost, -1.0000u
+  3. DET@TOR 09-15 (822762), NRFI, DraftKings, -115, 1u -> won, +0.8696u
+  4. MIL@PIT 09-15 (823333), NRFI, DraftKings, -160, 1.2u -> won, +0.7500u
+All at the $25/unit default (matches the seed bet and every bet logged so far; no evidence a
+different rate was ever in effect). `placed_at` on all 4 is the actual insertion time
+(2026-09-17), not backdated to the game date — add_bet() doesn't take a placed_at override and
+this wasn't worth a special case for a one-time backfill; it only affects same-date tie-break
+ordering in the table, which is cosmetic.
+VERIFIED: printed the resulting rows immediately after grading (status/runs/result_units all
+correct). Confirmed all 5 "Bet log update" auto-commits (2026-09-16's feature) actually reached
+origin/main via `git log origin/main`. Checked the local app in-browser: tracker bar reads
+"3-2 | +0.6u | +$15" (hand-verified: 1.0 - 1.0 - 1.0 + 0.8696 + 0.75 = 0.6196u; 25-25-25+21.74+
+18.75 = $15.49, both round to the displayed values), and the Bet log table shows all 5 rows
+sorted newest-game-first with correct Stake/Payout/Status/1st-Inn Runs for each.
+FILES CHANGED: data/bet_log.csv (4 new rows, real historical bets — not test data, left in
+place), claude-prompts.txt.
+DEPLOY: no code change this entry; the bet-log commits already pushed automatically via the
+existing auto-commit feature. Streamlit Cloud will show all 5 bets on its next redeploy.
