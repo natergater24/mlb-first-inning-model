@@ -38,8 +38,8 @@
 - [ ] **Step 0: Install pytest (one-time, first test file in this repo)**
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
-./venv/bin/pip install pytest
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
+/Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/venv/bin/pip install pytest
 echo "" >> requirements.txt
 echo "# Testing" >> requirements.txt
 echo "pytest>=8.0.0" >> requirements.txt
@@ -81,8 +81,8 @@ def test_shrink_never_returns_nan():
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
-./venv/bin/python -m pytest tests/test_yrfi_features.py -v
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
+/Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/venv/bin/python -m pytest tests/test_yrfi_features.py -v
 ```
 
 Expected: FAIL with `ImportError: cannot import name '_shrink'`.
@@ -146,8 +146,8 @@ Also update the `p is None` branch (debut pitcher, no profile row) a few lines a
 - [ ] **Step 4: Run tests to verify they pass, then check the real ATH@CLE case**
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
-./venv/bin/python -m pytest tests/test_yrfi_features.py -v
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
+/Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/venv/bin/python -m pytest tests/test_yrfi_features.py -v
 ```
 
 Expected: PASS (4/4).
@@ -155,8 +155,8 @@ Expected: PASS (4/4).
 Then confirm against live data (Daniel Espino has ZERO rows in `pitcher_nrfi_profile.parquet` at all per this session's earlier investigation — confirm `_pitcher_features()`'s `p is None` branch is what actually fires for him, meaning his `career_nrfi_pct`/`seas_nrfi_pct`/`l5_nrfi_pct` stay `np.nan` from this task alone and get the training-median fallback same as before; `_shrink` only changes Mason Barnett's side in this specific game):
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
-./venv/bin/python -c "
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
+/Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/venv/bin/python -c "
 import sys; sys.path.insert(0, 'src')
 from yrfi_features import load_support, _pitcher_features
 prof_map, _ = load_support()
@@ -170,7 +170,7 @@ Expected: Barnett's `away_pitcher_seas_nrfi_pct` should now read ~58.75 (shrunk 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
 git add src/yrfi_features.py tests/test_yrfi_features.py requirements.txt
 git commit -m "$(cat <<'EOF'
 Add Bayesian shrinkage to pitcher NRFI-rate model features
@@ -241,8 +241,8 @@ def test_confidence_features_present_in_feature_columns():
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
-./venv/bin/python -m pytest tests/test_yrfi_features.py -v
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
+/Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/venv/bin/python -m pytest tests/test_yrfi_features.py -v
 ```
 
 Expected: the 4 new tests FAIL (`KeyError` on the new column names).
@@ -259,9 +259,21 @@ Add near `PITCHER_FEATS` in `src/yrfi_features.py`:
 PITCHER_CONFIDENCE_FEATS = ["starts_log", "seas_starts_log", "is_debut"]
 ```
 
-In `_pitcher_features()`, in the `p is None` branch (debut pitcher, no profile row at all), add after the existing `for f in PITCHER_FEATS: out[...] = np.nan` loop:
+In `_pitcher_features()`, the `p is None` branch (debut pitcher, no profile row at all) currently reads exactly:
 
 ```python
+    if p is None:
+        for f in PITCHER_FEATS:
+            out[f"{prefix}_pitcher_{f}"] = np.nan
+        return out
+```
+
+**Replace it with** (note the pre-existing `return out` moves down — do not leave the old one in place, or the three new lines below become unreachable dead code):
+
+```python
+    if p is None:
+        for f in PITCHER_FEATS:
+            out[f"{prefix}_pitcher_{f}"] = np.nan
         out[f"{prefix}_pitcher_starts_log"] = 0.0
         out[f"{prefix}_pitcher_seas_starts_log"] = 0.0
         out[f"{prefix}_pitcher_is_debut"] = 1
@@ -296,8 +308,8 @@ def feature_columns() -> list[str]:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
-./venv/bin/python -m pytest tests/test_yrfi_features.py -v
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
+/Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/venv/bin/python -m pytest tests/test_yrfi_features.py -v
 ```
 
 Expected: PASS (8/8 total).
@@ -305,7 +317,7 @@ Expected: PASS (8/8 total).
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
 git add src/yrfi_features.py tests/test_yrfi_features.py
 git commit -m "$(cat <<'EOF'
 Add pitcher starts-count and debut-flag as model features
@@ -328,8 +340,9 @@ EOF
 ### Task 3: Retrain and compare against the currently-deployed model
 
 **Files:**
-- Run (no code changes expected): [src/13_train_yrfi_model.py](MLB_Pipeline/src/13_train_yrfi_model.py)
+- Modify: [src/13_train_yrfi_model.py](MLB_Pipeline/src/13_train_yrfi_model.py) (one small change — see the note before Step 3 below — to persist per-game test predictions for Task 4's use; not a training-logic change)
 - Produces (overwrites in place, git-tracked): `data/models/yrfi_model.pkl`, `data/models/yrfi_model_meta.json`, `data/models/yrfi_feature_importance.csv`
+- Produces (local diagnostic, gitignored, not committed): `data/models/yrfi_test_predictions_2026-09-18.parquet`
 
 **Interfaces:**
 - Consumes: `feature_columns()` from Tasks 1+2 (the retrain automatically picks up the new/changed features — no wiring needed, `src/13` calls `feature_columns()` directly).
@@ -340,7 +353,7 @@ EOF
 - [ ] **Step 1: Confirm a clean starting point**
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
 git status --short
 ```
 
@@ -349,17 +362,35 @@ Expected: clean except Tasks 1-2's already-committed changes. If anything else i
 - [ ] **Step 2: Run the retrain, timed**
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
-time ./venv/bin/python src/13_train_yrfi_model.py 2>&1 | tee /tmp/retrain_log.txt
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
+time /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/venv/bin/python src/13_train_yrfi_model.py 2>&1 | tee /tmp/retrain_log.txt
 ```
 
 Record the wall-clock time in the session notes (unknown ahead of time — 27,450 games × 600 trees is the only sizing data available; if it runs long, that's useful to know for next time, not a reason to interrupt it).
 
+**Note on Task 4's needs:** `src/13_train_yrfi_model.py`'s `evalset()` function computes per-game predictions (`p`) for the test set but currently discards them (`r, _ = evalset(...)`) — only the aggregate metrics in `results` get saved. Task 4's subset check needs the per-game predictions. Before running the retrain, make this one-line addition to `src/13_train_yrfi_model.py` in the `for nm, fr, yt in (("val_2023", va, yva), ("test_2024", te, yte)):` loop:
+
+```python
+    for nm, fr, yt in (("val_2023", va, yva), ("test_2024", te, yte)):
+        r, p = evalset(nm, fr, yt)
+        results.append(r)
+        if nm == "test_2024":
+            fr.assign(y_true=yt, p_new=p)[
+                ["game_pk", "home_pitcher_starts_log", "away_pitcher_starts_log"]
+                + ["y_true", "p_new"]
+            ].to_parquet(MODELS / "yrfi_test_predictions_2026-09-18.parquet")
+        print(f"  {nm}: AUC {r['auc']} | logloss {r['log_loss']} | Brier {r['brier']} "
+              f"| ECE {r['ece']} | acc {r['accuracy']} | "
+              f"pred {r['pred_yrfi_rate']} vs actual {r['actual_yrfi_rate']}", flush=True)
+```
+
+(This replaces the existing `r, _ = evalset(nm, fr, yt)` / print block in that loop — same loop, just capturing `p` instead of discarding it and adding the one conditional save.) This new parquet is **not** added to `.gitignore`'s exceptions and will not be committed — `data/models/*` is already gitignored except the specific files Task 5 lists, so this stays a local diagnostic artifact automatically. Delete it or leave it; it doesn't need cleanup for the plan to be complete.
+
 - [ ] **Step 3: Compare new metrics against baseline — go/no-go gate**
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
-./venv/bin/python -c "
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
+/Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/venv/bin/python -c "
 import json
 m = json.load(open('data/models/yrfi_model_meta.json'))
 test = next(x for x in m['metrics'] if x['set'] == 'test_2024')
@@ -375,7 +406,7 @@ print(test)
 - [ ] **Step 4a: If criteria FAIL — revert and report**
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
 git checkout -- data/models/
 ```
 
@@ -396,11 +427,19 @@ This task is manual analysis, not code the user will ship — per the "Known lim
 
 - [ ] **Step 1: Historical subset check (approximate — read the caveat above)**
 
-Using the already-loaded 2024 test predictions from Task 3's retrain run, slice to games where either starter's **current** `total_starts < 15` (acknowledging this under-counts true 2024-era thin-sample cases due to look-ahead bias) and compare Brier score on that subset for the old vs. new model. This is a supporting signal, not a proof — note it as such when reporting results.
+Load `data/models/yrfi_test_predictions_2026-09-18.parquet` (persisted by Task 3's modified `evalset()` loop). Slice to rows where either starter's **current** `total_starts_log < log1p(15)` (acknowledging this under-counts true 2024-era thin-sample cases due to look-ahead bias — see the Known Limitation section) and compute the new model's Brier score on that subset (`(p_new - y_true)**2`, mean). Report that subset Brier alongside the OLD model's *aggregate* test-2024 Brier (0.2479, from the Global Constraints/baseline section) as a rough directional reference point — this is **not** an apples-to-apples subset-vs-subset comparison (there is no old-model prediction on this exact subset available; re-scoring the old model would require reconstructing the pre-Task-1/2 feature matrix, out of scope for what's meant to be a supporting signal, not a proof). State this caveat explicitly when reporting results — do not present the subset Brier as if it were directly comparable to the old model's number.
 
 - [ ] **Step 2: Live spot-check against real upcoming games**
 
-With the new (uncommitted) `yrfi_model.pkl` in place locally, restart Streamlit (`kill $(lsof -ti :8501); cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline && nohup caffeinate -i /Library/Frameworks/Python.framework/Versions/3.14/bin/streamlit run app.py --server.headless true --server.port 8501 >> logs/streamlit.log 2>&1 &`) and re-run `src/14_build_todays_yrfi.py` against the current slate. Specifically check:
+With the new (uncommitted) `yrfi_model.pkl` in place locally in the worktree, restart Streamlit **from the worktree directory** (running it from the original repo checkout would serve the OLD model, defeating this check):
+
+```bash
+kill $(lsof -ti :8501) 2>/dev/null
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
+nohup caffeinate -i /Library/Frameworks/Python.framework/Versions/3.14/bin/streamlit run app.py --server.headless true --server.port 8501 >> logs/streamlit.log 2>&1 &
+```
+
+Then re-run `src/14_build_todays_yrfi.py` (same directory, using `/Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/venv/bin/python`) against the current slate. Specifically check:
 - Does ATH@CLE (or whatever thin-sample game is live that day) move meaningfully toward the market's ~coin-flip pricing, rather than staying at an extreme like -580?
 - Do well-supported games (established pitchers on both sides) stay roughly where they were — confirming the fix targets thin samples specifically rather than flattening every prediction toward 50/50?
 
@@ -413,14 +452,14 @@ If both legs look reasonable: proceed to Task 5. If either is ambiguous or conce
 ### Task 5: Ship
 
 **Files:**
-- Commit: `data/models/yrfi_model.pkl`, `data/models/yrfi_model_meta.json`, `data/models/yrfi_feature_importance.csv`
+- Commit: `data/models/yrfi_model.pkl`, `data/models/yrfi_model_meta.json`, `data/models/yrfi_feature_importance.csv`, `src/13_train_yrfi_model.py` (Task 3's small predictions-capture change)
 - Modify: [claude-context.txt](MLB_Pipeline/claude-context.txt), [claude-prompts.txt](MLB_Pipeline/claude-prompts.txt), [USER_MANUAL.md](MLB_Pipeline/USER_MANUAL.md) — per this project's established documentation convention (see prior entries in both files from this same session for the expected level of detail: what changed, why, what was verified, what wasn't).
 
 - [ ] **Step 1: Commit the new model artifacts**
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
-git add data/models/yrfi_model.pkl data/models/yrfi_model_meta.json data/models/yrfi_feature_importance.csv
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
+git add data/models/yrfi_model.pkl data/models/yrfi_model_meta.json data/models/yrfi_feature_importance.csv src/13_train_yrfi_model.py
 git commit -m "$(cat <<'EOF'
 Retrain YRFI model with pitcher small-sample corrections
 
@@ -443,7 +482,7 @@ Follow this session's established pattern in `claude-context.txt` (a dated secti
 - [ ] **Step 3: Push and verify live**
 
 ```bash
-cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline
+cd /Users/nathantessler/Desktop/Nathan/Claude/MLB_Pipeline/.claude/worktrees/pitcher-sample-size-fix
 git push origin main
 ```
 
