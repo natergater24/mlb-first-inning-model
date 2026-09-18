@@ -1714,4 +1714,9 @@ FILES CHANGED: app.py, src/04_fetch_odds.py, data/processed/todays_yrfi_predicti
 claude-context.txt, claude-prompts.txt, USER_MANUAL.md. (data/odds/*.parquet is gitignored, not
 committed — regenerated locally only.)
 DEPLOY: committed and pushed to origin/main so Streamlit Community Cloud redeploys with the
-Caesars fix and the low-confidence flag live.
+Caesars fix and the low-confidence flag live. VERIFIED live on the hosted app — but discovered
+along the way that redeploy alone doesn't refresh the odds data: the hosted app's Caesars link
+still showed the old /us/nj/ domain (with matching odds_checked_at timestamp from before the fix)
+until its own "🔄 Refresh slate" button was clicked, which re-runs 04_fetch_odds.py live in that
+session. After clicking it, odds_checked_at updated and the link corrected to /us/nc/. Documented
+in claude-context.txt as a note for verifying any future odds/deeplink fix on Cloud.

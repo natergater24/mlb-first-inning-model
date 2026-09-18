@@ -780,6 +780,15 @@ options rather than built.
     book's real site (browser tool blocks gambling-site navigation) — only verified the hrefs
     render as sports.nc.betmgm.com / .../us/nc/... in the dashboard. Ask the user to confirm both
     links actually resolve once clicked for real.
+    NOTE ON VERIFYING ODDS/DEEPLINK CODE CHANGES ON CLOUD: a plain git push + Cloud redeploy is
+    NOT enough to see an odds-fetch code change live — the hosted app's committed
+    todays_yrfi_predictions.parquet only updates when its own "🔄 Refresh slate" button is clicked
+    (it re-runs the daily pipeline, including 04_fetch_odds.py, live in that session). Confirmed
+    this the hard way verifying the Caesars fix: right after redeploy the hosted app still showed
+    the stale pre-fix odds_checked_at timestamp and an /us/nj/ Caesars link (same selectionId as
+    the fixed local parquet, just the old domain) until "Refresh slate" was clicked, after which
+    odds_checked_at updated and the link corrected to /us/nc/. Any future odds/deeplink fix needs
+    this extra click before it can be verified live, not just a push + wait.
   - DONE 2026-09-18: LOW-CONFIDENCE PREDICTION FLAG — see its own section above. Safeguard only
     (warns when pitcher_nrfi_record dominates on a <10-career-start or debut pitcher); does not
     change the model's actual probability.
