@@ -131,10 +131,11 @@ Neither restarts Streamlit; use `launch.sh` or Option B for that.
   once/day; don't `--force-refresh` repeatedly when quota is low.
 - **Instant "add to betslip" (⚡)** works for **Caesars & BetMGM** only.
   DraftKings has no deeplink; FanDuel's is a template id that FD rejects — both
-  fall back to the book's MLB lobby (↗). Deeplinks are US/NJ-scoped, except
-  BetMGM's, which is rewritten to the NC subdomain (`sports.nc.betmgm.com`)
-  before display (added 2026-09-18 — SGO's API has no region param, so this is
-  a string-replace at capture time; Caesars is still NJ-scoped).
+  fall back to the book's MLB lobby (↗). SGO always returns both Caesars and
+  BetMGM deeplinks NJ-scoped; both are rewritten to NC (`sports.nc.betmgm.com`,
+  `.../us/nc/...`) at capture time before display (added 2026-09-18 — SGO's
+  API has no region param, so this is a plain string-replace, reasoning-based
+  and not click-tested against either book's real site).
 - bet365 / Fanatics are on neither feed for MLB (see `claude-context.txt`).
 - If neither source returns first-inning data, `04` writes an empty file and the
   dashboard falls back to model-only.
@@ -158,17 +159,23 @@ Single page, three views.
   table DK/FD/MGM/CZR with ⚡/↗ links (right); recommended-bet badge + edge% +
   EV/$100 + "View details →"; a **"Why this edge"** 1-2 sentence caption (added
   2026-09-18, same logic as the detail view below) naming what's driving the
-  lean; then a collapsed **➕ Log a Bet** at the bottom.
+  lean, plus a **"⚠️ Low-confidence prediction"** caption when that logic
+  fires (see detail view below); then a collapsed **➕ Log a Bet** at bottom.
 
 **Detail view (7 sections + Track a Bet):** model summary + book table — including
 a **"Why this edge"** 1-2 sentence caption right under the probability bar (added
 2026-09-18) naming what's actually driving the lean; it only names a specific
 pitcher or team-vs-pitcher matchup when the number is genuinely significant
 (enough starts/PA and a real outlier value), otherwise it just names the
-dominant factor group (e.g. "the pitcher NRFI track record") — then **Track a
-Bet**, then weather/park (with the HR-factor explainer) · away pitcher
-profile · home pitcher profile · away team projected top-5 vs pitcher · home team
-projected top-5 · historical YRFI context.
+dominant factor group (e.g. "the pitcher NRFI track record"). Right below that,
+a **"⚠️ Low-confidence prediction"** warning box (added 2026-09-18) appears
+whenever the pitcher NRFI track record is the single biggest driver of the
+lean AND one of the two starters has fewer than 10 career MLB starts (or none
+at all — a debut) — it names the thin-sample pitcher(s) so you know the
+model's probability may be overconfident, without hiding or changing the
+number itself. Then **Track a Bet**, then weather/park (with the HR-factor
+explainer) · away pitcher profile · home pitcher profile · away team projected
+top-5 vs pitcher · home team projected top-5 · historical YRFI context.
 
 **All Bets view:** reached via "View all N bets →" under the **🧾 Bet log**
 table (see Bet Tracker below) — the complete bet history as the same table,

@@ -659,6 +659,9 @@ def game_card(r):
         why = _why_this_edge(r)
         if why:
             st.caption(why)
+        low_conf = _low_confidence_reason(r)
+        if low_conf:
+            st.caption(low_conf)
 
         # ── inline bet logger (compact, collapsed by default) ─────────────
         with st.expander("➕ Log a Bet", expanded=False, key=f"bet_exp_{pk}"):
@@ -858,6 +861,47 @@ def _why_this_edge(r) -> str:
     return f"📊 Driven mainly by {pieces[0]}, with {pieces[1]} reinforcing the {side} lean."
 
 
+# ── low-confidence flag (thin pitcher sample driving the model) ─────────────
+# The model's pitcher_nrfi_record features (career/season NRFI%, first-inning
+# ERA, etc. -- see PITCHER_FEATS in yrfi_features.py) are RAW rate stats with
+# no sample-size weighting: a 25% NRFI rate over 4 starts moves the model just
+# as hard as a 25% rate over 40 starts. When that group is what's actually
+# driving the pick AND one of the two starters has a career sample this thin,
+# the model's probability can be extreme relative to what the sample actually
+# supports -- flag it rather than silently present it as confident.
+_CONF_MIN_CAREER_STARTS = 10   # career MLB starts needed to trust the NRFI/ERA rate stats
+
+
+def _low_confidence_reason(r) -> str | None:
+    """Returns a caution string when the dominant contrib group is the
+    pitcher's NRFI track record and at least one starter's career sample is
+    too thin (or entirely absent -- e.g. an MLB debut) to trust that rate.
+    Returns None when the prediction looks well-supported."""
+    logit = r.get("base_model_logit")
+    if pd.isna(logit):
+        return None
+    contribs = {g: float(r.get(f"contrib_{g}") or 0.0) for g in WEIGHT_GROUPS}
+    top_group, top_val = max(contribs.items(), key=lambda kv: abs(kv[1]))
+    if top_group != "pitcher_nrfi_record" or abs(top_val) < _WHY_EDGE_MIN_CONTRIB:
+        return None
+    profiles = load_pitcher_profiles()
+    thin = []
+    for side in ("home", "away"):
+        pid, name = r.get(f"{side}_pitcher_id"), r.get(f"{side}_pitcher_name")
+        if pd.isna(pid) or not name:
+            continue
+        prow = profiles[profiles["pitcher_id"] == int(pid)]
+        starts = prow.iloc[0].get("total_starts") if not prow.empty else None
+        if prow.empty or pd.isna(starts):
+            thin.append(f"{name} (no MLB first-inning history yet)")
+        elif starts < _CONF_MIN_CAREER_STARTS:
+            thin.append(f"{name} ({int(starts)} career start{'s' if int(starts) != 1 else ''})")
+    if not thin:
+        return None
+    return ("⚠️ Low-confidence prediction — the pitcher NRFI track record driving this lean "
+            "is a thin sample: " + " and ".join(thin) + ". Treat this line with caution.")
+
+
 def section_prediction(r):
     st.subheader("1 · Model Prediction Summary")
     nrfi = float(r["model_nrfi_prob"])
@@ -882,6 +926,9 @@ def section_prediction(r):
     why = _why_this_edge(r)
     if why:
         st.caption(why)
+    low_conf = _low_confidence_reason(r)
+    if low_conf:
+        st.warning(low_conf)
     st.write("")
 
     rows = []

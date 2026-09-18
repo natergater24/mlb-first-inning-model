@@ -118,6 +118,11 @@ Kept & updated:
                           + best_{yrfi,nrfi}_link. SGO returns a `deeplink` per bet (like Pikkit):
                             Caesars  — sportsbook.caesars.com/us/nj/bet/betslip?selectionIds=<uuid>
                                        — REAL per-selection uuid, works. ⚡ in the dashboard.
+                                       FIXED 2026-09-18 (same day as BetMGM, user flagged it had
+                                       the identical issue): string-replace "/us/nj/" -> "/us/nc/"
+                                       in fetch_sgo_first_inning() (short == "CZR"), same reasoning
+                                       as BetMGM below — same shared-platform assumption, same
+                                       "could not click-test on the real site" caveat.
                             BetMGM   — sports.nj.betmgm.com/en/sports?options=<a-b-c> — REAL,
                                        last segment per side. ⚡ in the dashboard.
                                        FIXED 2026-09-18: SGO always returns this NJ-scoped, even
@@ -135,8 +140,8 @@ Kept & updated:
                                        claude-in-chrome refuses navigation to gambling sites ("not
                                        allowed due to safety restrictions"). If it ever 404s/misroutes
                                        for the user, revert the .replace() call in 04_fetch_odds.py.
-                                       Caesars is also NJ-scoped per the same docs but was left
-                                       untouched (user only asked about BetMGM).
+                                       Caesars had the identical issue — fixed same day, see its
+                                       own entry above.
                             FanDuel  — sportsbook.fanduel.com/addToBetslip?marketId=<per-game>&
                                        selectionId=<GENERIC>. The selectionId is a TEMPLATE id
                                        (7017905 Over / 7017906 Under for EVERY game); FanDuel
@@ -146,7 +151,8 @@ Kept & updated:
                                        those deeplinks -> FanDuel becomes a lobby link (↗).
                             DraftKings — SGO returns no deeplink at all -> lobby link (↗).
                           So ⚡ instant-betslip works for Caesars & BetMGM only. DK + FD open the
-                          book's MLB lobby. Caesars/BetMGM links are NJ-scoped (US only).
+                          book's MLB lobby. Caesars/BetMGM deeplinks come back NJ-scoped from SGO;
+                          both are rewritten to NC at capture time (see FIXED notes above).
                           DK-instant-link options (not pursued): The Odds API "Links" add-on
                           doesn't carry DK's first-inning market anyway; scraping DK's ?outcomes=
                           scheme is brittle + ToS-risky; a commercial betslip-link feed
@@ -678,6 +684,53 @@ back to the group label. Confirmed in-browser: restarted local Streamlit, opened
 and read the rendered caption directly under the probability bar in both — reads naturally,
 correctly placed, doesn't clutter the layout.
 
+=== LOW-CONFIDENCE PREDICTION FLAG (built 2026-09-18) ===
+TRIGGER: real case on today's slate — ATH@CLE model priced YRFI at 85.3% (-580), while every
+sportsbook had it near a coin flip (DK/FD/MGM/CZR all -105 to -132 on YRFI). User asked why the
+model was so far off and what to do about it.
+
+ROOT CAUSE (see also the diagnosis written up for the user in chat, same date): the model's
+pitcher_nrfi_record group (yrfi_features.py PITCHER_FEATS: career_nrfi_pct, seas_nrfi_pct,
+l5_nrfi_pct, first_inn_era, etc.) is fed as RAW rate stats with NO sample-size weighting anywhere
+in the pipeline — no starts-count feature, no Bayesian shrinkage toward a league-average prior.
+For ATH@CLE: away starter Mason Barnett has 9 career MLB starts (4 this season, 25% seas_nrfi_pct,
+11.0 first-inning ERA) — noise-level sample, not a reliable rate. Home starter Daniel Espino has
+ZERO recorded starts (not in pitcher_nrfi_profile.parquet at all — MLB debut) — every
+home_pitcher_* feature is NaN, filled with the training-set median at inference (src/14 line
+~216), a reasonable "assume average" default but one that leaves no real counter-signal on that
+side either. Net: contrib_pitcher_nrfi_record = +0.6632, by far the largest single contributor in
+the game, built almost entirely on Barnett's thin/noisy rate with nothing to check it against.
+
+FIX SHIPPED (safeguard, not a model change): _low_confidence_reason(r) in app.py. Fires when (a)
+pitcher_nrfi_record is the single largest |contrib| group AND (b) at least one starter's
+total_starts (career, from pitcher_nrfi_profile.parquet) is below _CONF_MIN_CAREER_STARTS (10) or
+the pitcher has no profile row at all (debut). Renders "⚠️ Low-confidence prediction — ... Treat
+this line with caution" naming the thin-sample pitcher(s) and their start count — st.warning() box
+in the detail view (section_prediction, right under the probability bar), a compact st.caption on
+landing-page cards (game_card, same spot as the "why this edge" caption). Does NOT touch
+model_yrfi_prob/nrfi_prob, the recommended_bet badge, edge%, or EV — it's a caution label layered
+on top, not a suppression of the underlying number (the "why this edge" MIN_SEAS_STARTS=8 gate
+already prevented the explanation text from citing Barnett by name — this flag is the equivalent
+guardrail for the model's actual probability, which had none).
+
+VERIFIED: ran _low_confidence_reason() against all 7 real games on 2026-09-18's slate (bare-mode,
+outside Streamlit) — fired correctly for ATH@CLE (Espino debut + Barnett 9 starts) and DET@CWS
+(David Sandlin 3 starts + Andrew Sears 1 start, a case that wasn't even on my radar until the
+check ran) — both games where pitcher_nrfi_record dominates on a starter with <10 career starts.
+Correctly silent on the other 5 games (KC@PIT, BOS@TB, CHC@CIN, MIL@BAL, PHI@NYM), including ones
+where pitcher_nrfi_record was *cited by name* in the why-this-edge blurb (Randy Dobnak, Ian
+Seymour, Chase Burns, Zac Thornton) — all of those pitchers clear both the 8-season-start bar (why
+blurb) and the 10-career-start bar (this flag), which is the expected/correct boundary between the
+two thresholds. Confirmed in-browser on localhost: warning box renders correctly on the ATH@CLE
+detail view under the probability bar, and the caption renders on its landing-page card above "Log
+a Bet".
+
+NOT FIXED (deliberately, needs a bigger call — see OUTSTANDING below): the underlying
+model_yrfi_prob itself is untouched. -580 will still display as -580; this only adds a warning
+next to it. A real fix means changing what the model is trained on (shrinkage/starts-feature) and
+requires a retrain — bigger scope than a same-session safeguard, discussed with user as follow-up
+options rather than built.
+
 === OUTSTANDING / NEXT STEPS ===
   - RECURRING: run src/backfill_feeds.py + src/02 --build-lineup-history weekly (or fold recent
     completed feeds into the daily flow) so lineup_position_summary + batter_game_logs stay
@@ -721,11 +774,37 @@ correctly placed, doesn't clutter the layout.
   - DONE 2026-09-18: "WHY THIS EDGE" BLURB — see its own section right after FUTURE PROJECT —
     PER-PITCH BATTED-BALL MODEL above for the full implementation writeup. Card-level (landing
     page) version was added same-day, same section — both detail view and landing cards now show it.
-  - DONE 2026-09-18: BETMGM NC FIX — see 04_fetch_odds.py section above (~line 121). SGO's BetMGM
-    deeplinks are always NJ-scoped; string-replaced to NC at capture time since SGO's API has no
-    region param. Reasoning-based fix, NOT click-tested against BetMGM's real site (browser tool
-    blocks gambling-site navigation) — only verified the href renders as sports.nc.betmgm.com in the
-    dashboard. Ask the user to confirm the link actually resolves once they click it for real.
+  - DONE 2026-09-18: BETMGM + CAESARS NC FIX — see 04_fetch_odds.py section above (~line 121).
+    SGO's BetMGM/Caesars deeplinks are always NJ-scoped; both string-replaced to NC at capture time
+    since SGO's API has no region param. Reasoning-based fix, NOT click-tested against either
+    book's real site (browser tool blocks gambling-site navigation) — only verified the hrefs
+    render as sports.nc.betmgm.com / .../us/nc/... in the dashboard. Ask the user to confirm both
+    links actually resolve once clicked for real.
+  - DONE 2026-09-18: LOW-CONFIDENCE PREDICTION FLAG — see its own section above. Safeguard only
+    (warns when pitcher_nrfi_record dominates on a <10-career-start or debut pitcher); does not
+    change the model's actual probability.
+  - MODEL FIX NOT STARTED (flagged 2026-09-18, needs a retrain — bigger scope, discussed as
+    options rather than built): the pitcher_nrfi_record features themselves have no small-sample
+    correction. Options discussed with the user, cheapest to most involved:
+      (1) [shipped as a stopgap] UI warning flag — see LOW-CONFIDENCE PREDICTION FLAG above.
+      (2) Blend model_yrfi_prob toward yrfi_market_avg_implied (already computed) when they
+          diverge sharply AND a driving pitcher is thin-sample — no retrain, just a post-hoc
+          adjustment in src/14 or app.py. Middle ground: tempers the number itself, still cheap.
+      (3) Bayesian/empirical-Bayes shrinkage on seas_nrfi_pct/career_nrfi_pct/l5_nrfi_pct at the
+          source (src/11_build_pitcher_nrfi.py or yrfi_features.py): shrunk_rate = (nrfi_count +
+          k*league_avg) / (starts + k) for some pseudo-count k (~10-15). Pulls small-sample
+          pitchers toward the ~70% league baseline automatically; pitchers with a real track
+          record keep their observed rate. Requires retraining src/13's model since it changes the
+          feature distribution.
+      (4) Add starts-count (or log1p(starts)) as its own model feature (career + season) so the
+          RandomForest can learn to downweight thin samples itself. Complementary to (3), not a
+          substitute — trees need many small-sample training examples to learn the interaction on
+          their own, so (3) is the more directly effective fix. Also requires a retrain.
+      (5) Add an explicit is_debut/has_profile flag for pitchers with no profile row at all (median
+          imputation currently treats a total unknown as "average," silently) so the model can
+          treat that case distinctly. Pairs with (3)/(4); also needs a retrain.
+    Recommended sequencing if picked up: (2) first as a quick no-retrain improvement, then (3)+(4)
+    together at the next full retrain (touching the same feature-engineering pass anyway).
   - Consider point-in-time pitcher NRFI aggregates to remove the look-ahead bias in training.
   - Optional: switch calibration to sigmoid if isotonic plateaus stay too coarse.
   - FUTURE (own section above): per-pitch batted-ball model, shown alongside — not inside — the

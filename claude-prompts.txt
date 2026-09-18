@@ -1654,3 +1654,64 @@ data/processed/todays_yrfi_predictions.parquet, claude-context.txt, claude-promp
 USER_MANUAL.md.
 DEPLOY: committed and pushed to origin/main so Streamlit Community Cloud redeploys with both
 fixes live.
+
+=== 2026-09-18 — BUILT: CAESARS NC LINK FIX + LOW-CONFIDENCE PREDICTION FLAG ===
+TASK: user confirmed BetMGM's NC fix worked, then asked for two more things: (1) Caesars has the
+identical NJ-vs-NC issue and needs the same fix; (2) today's ATH@CLE game shows -580 model odds
+for YRFI (85% probability) which is "completely unrealistic" — explain why the data is this
+skewed and what the options are to account for it in the model.
+
+PART 1 — CAESARS NC FIX: same pattern as BetMGM (see earlier 2026-09-18 entry), but Caesars scopes
+by URL path segment, not subdomain: sportsbook.caesars.com/us/nj/bet/betslip?selectionIds=<uuid>.
+Added an elif branch in fetch_sgo_first_inning() (src/04_fetch_odds.py, short == "CZR"):
+"/us/nj/" -> "/us/nc/". Same reasoning as BetMGM (shared platform, geofenced by URL, no region
+param in SGO's API). Regenerated data/odds/yrfi_odds_2026-09-18.parquet and confirmed both
+yrfi_link_CZR/nrfi_link_CZR now read .../us/nc/bet/betslip?... — verified alongside the BetMGM
+column in the same parquet read.
+
+PART 2 — DIAGNOSED THE -580 SKEW: read the full ATH@CLE prediction row plus
+pitcher_nrfi_profile.parquet for both starters. Root cause: the model's pitcher_nrfi_record
+features (yrfi_features.py PITCHER_FEATS — career_nrfi_pct, seas_nrfi_pct, l5_nrfi_pct,
+first_inn_era, etc.) are raw rate stats with ZERO sample-size weighting anywhere in the pipeline —
+no starts-count feature fed to the model, no shrinkage toward a league-average prior. Away starter
+Mason Barnett: 9 career MLB starts (4 this season), 25% seas_nrfi_pct, 11.0 first-inning ERA — a
+noise-level sample dressed up as a rate. Home starter Daniel Espino: literally not in
+pitcher_nrfi_profile.parquet — zero recorded starts (MLB debut) — every home_pitcher_* feature is
+NaN and gets filled with the training-set median at inference (src/14 ~line 216), a reasonable
+"assume average" default that leaves no real counter-signal either. Result:
+contrib_pitcher_nrfi_record = +0.6632, by far the largest single contributor in the game, built
+almost entirely on Barnett's noisy small-sample rate with nothing to check it against — hence
+model_yrfi_prob = 85.3% while every book (DK/FD/MGM/CZR) priced it near a coin flip. Explained this
+to the user with the full options list before building anything (see claude-context.txt's new LOW-
+CONFIDENCE PREDICTION FLAG + MODEL FIX NOT STARTED sections for the complete 5-option list, ranked
+cheapest-to-most-involved: UI warning flag / blend toward market / Bayesian shrinkage on the rate
+features / add a starts-count model feature / add a debut/no-profile flag — the last three require
+a retrain, the first two don't).
+
+SHIPPED (as the immediate safeguard, option 1 of that list): _low_confidence_reason(r) in app.py.
+Fires when pitcher_nrfi_record is the single largest |contrib| group AND at least one starter has
+<10 career starts (_CONF_MIN_CAREER_STARTS) or no profile row at all. Renders a named warning
+("⚠️ Low-confidence prediction — ... Daniel Espino (no MLB first-inning history yet) and Mason
+Barnett (9 career starts). Treat this line with caution.") as an st.warning() box in the detail
+view (section_prediction, right under the probability bar, same spot as the "why this edge"
+caption) and a compact st.caption on landing-page cards (game_card, same spot). Deliberately does
+NOT touch model_yrfi_prob, the recommended_bet badge, edge%, or EV — it's a caution label layered
+on top of the existing number, not a suppression of it; changing the number itself needs a retrain
+(see the options list) and wasn't something to do silently mid-session.
+
+VERIFIED: ran _low_confidence_reason() against all 7 real games on 2026-09-18's slate (bare-mode
+script, outside Streamlit) — correctly fired for ATH@CLE (the reported case) AND DET@CWS (David
+Sandlin 3 starts + Andrew Sears 1 start — a second thin-sample game that wasn't even flagged by
+the user, caught by the same check), correctly silent on the other 5 games including several where
+pitcher_nrfi_record was *named* in the why-this-edge blurb (Randy Dobnak, Ian Seymour, Chase
+Burns, Zac Thornton) — all of those clear both the why-blurb's 8-season-start bar and this flag's
+10-career-start bar, confirming the two thresholds interact correctly at their boundary. Restarted
+local Streamlit and confirmed in-browser: the warning box renders correctly on ATH@CLE's detail
+view right under the 85.3%/14.7% probability bar, and the caption renders on its landing-page card
+above the "Log a Bet" expander.
+
+FILES CHANGED: app.py, src/04_fetch_odds.py, data/processed/todays_yrfi_predictions.parquet,
+claude-context.txt, claude-prompts.txt, USER_MANUAL.md. (data/odds/*.parquet is gitignored, not
+committed — regenerated locally only.)
+DEPLOY: committed and pushed to origin/main so Streamlit Community Cloud redeploys with the
+Caesars fix and the low-confidence flag live.

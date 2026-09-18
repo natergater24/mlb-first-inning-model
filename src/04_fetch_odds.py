@@ -835,6 +835,13 @@ def fetch_sgo_first_inning(date_str: str) -> tuple[pd.DataFrame, dict]:
                     # states, just gated by subdomain, so the option ids should
                     # resolve the same way under a different state's subdomain.
                     dl = dl.replace("sports.nj.betmgm.com", "sports.nc.betmgm.com")
+                elif dl and short == "CZR":
+                    # Same NJ-scoping issue as BetMGM: SGO's Caesars deeplinks are
+                    # always /us/nj/ (sportsbook.caesars.com/us/nj/bet/betslip?
+                    # selectionIds=<uuid>) with no region param available. Caesars
+                    # scopes by URL path segment rather than subdomain, but it's
+                    # the same shared-platform assumption as BetMGM.
+                    dl = dl.replace("/us/nj/", "/us/nc/")
                 rows.append({"home_team": home, "away_team": away, "book": short,
                              "side": sidelbl, "american": am,
                              "implied": american_to_prob(am),
