@@ -30,6 +30,35 @@ from park_factors import get_park  # noqa: E402
 
 PRIMARY_PITCH_CODES = {"fb": 0, "sl": 1, "cb": 2, "ch": 3, None: -1, np.nan: -1}
 
+# ── small-sample correction for the NRFI-rate pitcher features ──────────────
+# career_nrfi_pct / seas_nrfi_pct / l5_nrfi_pct are observed proportions built
+# on wildly varying sample sizes (a rookie's 4-start season rate vs. a
+# 15-year veteran's 300-start career rate) -- fed to the model raw, with no
+# correction, a noisy 4-start rate moves the RandomForest exactly as hard as
+# a reliable 300-start one. This is a standard credibility/empirical-Bayes
+# blend: shrunk = (n*observed + k*prior) / (n+k). k is the "pseudo-start"
+# weight -- how many prior-strength starts the league-average prior is worth.
+# Diagnosed 2026-09-18 against a real case: ATH@CLE priced YRFI at 85%/-580
+# off Mason Barnett's 25% season NRFI rate over just 4 starts, while every
+# sportsbook had the game near a coin flip.
+NRFI_LEAGUE_PRIOR = 70.0   # matches app.py's _WHY_EDGE_LEAGUE_NRFI constant
+SHRINK_K_CAREER = 12.0     # ~12 "pseudo-starts" of prior weight
+SHRINK_K_SEASON = 12.0
+SHRINK_K_L5 = 4.0          # L5's full sample is only 5 starts -- a k of 12
+                           # would swamp it completely; 4 tempers without
+                           # neutering it (a perfect 5/5 still moves ~4/9 of
+                           # the way to the prior, not all the way).
+
+
+def _shrink(rate: float | None, n: float | None, prior: float, k: float) -> float:
+    """Credibility-weighted blend of an observed rate toward a prior. Always
+    returns a real float -- a missing/zero-sample pitcher (debut) returns
+    exactly `prior`, replacing what used to be a NaN fed into training-median
+    imputation with an explicit, principled default."""
+    n = 0.0 if n is None or pd.isna(n) else float(n)
+    rate = prior if rate is None or pd.isna(rate) else float(rate)
+    return round((n * rate + k * prior) / (n + k), 4)
+
 PITCHER_FEATS = [
     "career_nrfi_pct", "seas_nrfi_pct", "l5_nrfi_pct", "first_inn_era",
     "first_inn_k_rate", "first_inn_bb_rate", "first_inn_hard_hit",
@@ -86,9 +115,12 @@ def _pitcher_features(pid, prof_map: dict, prefix: str) -> dict:
         for f in PITCHER_FEATS:
             out[f"{prefix}_pitcher_{f}"] = np.nan
         return out
-    out[f"{prefix}_pitcher_career_nrfi_pct"] = p.get("nrfi_pct")
-    out[f"{prefix}_pitcher_seas_nrfi_pct"] = p.get("seas_nrfi_pct")
-    out[f"{prefix}_pitcher_l5_nrfi_pct"] = p.get("l5_nrfi_pct")
+    out[f"{prefix}_pitcher_career_nrfi_pct"] = _shrink(
+        p.get("nrfi_pct"), p.get("total_starts"), NRFI_LEAGUE_PRIOR, SHRINK_K_CAREER)
+    out[f"{prefix}_pitcher_seas_nrfi_pct"] = _shrink(
+        p.get("seas_nrfi_pct"), p.get("seas_starts"), NRFI_LEAGUE_PRIOR, SHRINK_K_SEASON)
+    out[f"{prefix}_pitcher_l5_nrfi_pct"] = _shrink(
+        p.get("l5_nrfi_pct"), p.get("l5_starts"), NRFI_LEAGUE_PRIOR, SHRINK_K_L5)
     out[f"{prefix}_pitcher_first_inn_era"] = p.get("first_inn_era")
     out[f"{prefix}_pitcher_first_inn_k_rate"] = p.get("first_inn_k_rate")
     out[f"{prefix}_pitcher_first_inn_bb_rate"] = p.get("first_inn_bb_rate")
