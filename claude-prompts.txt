@@ -1557,3 +1557,54 @@ questions list (dropped the now-resolved "should ballpark/weather ever headline"
 OUTSTANDING/NEXT STEPS pointer to match. No code changed — still planning/notes only.
 FILES CHANGED: claude-context.txt, claude-prompts.txt.
 DEPLOY: none.
+
+=== 2026-09-18 — BUILT: "WHY THIS EDGE" BLURB (picked up from 2026-09-17's spec) ===
+TASK: user asked to reread all docs and pick up where they left off yesterday. The last
+unfinished thread was the fully-spec'd "why this edge" blurb feature (see 2026-09-17 Parts 4-5)
+— deferred then due to usage limits, with a full implementation spec already written into
+claude-context.txt. Implemented it now per that spec's own recommendations (detail-view v1,
+computed live in app.py, two-tier default-group / conditional-player-name design).
+
+IMPLEMENTATION: three new functions in app.py, called from section_prediction() right after the
+NRFI/YRFI probability bar (before the book-lines table):
+  - _why_this_edge(r): direction = sign of base_model_logit (not model_yrfi_prob, which isotonic
+    calibration collapses onto a handful of clustered values per the documented model caveat —
+    verified the sign convention against real rows first rather than assuming it). Takes the top
+    1-2 WEIGHT_GROUPS whose contrib_<group> agrees with that direction, by |contrib|. Below a
+    0.05 log-odds floor on the top group, returns "⚖️ Close matchup — no single factor clearly
+    drives the {side} lean" (resolves the old "what to show for NO EDGE games" open question).
+  - _why_pitcher_upgrade(r, want_nrfi): names a specific starter's SEASON NRFI% only if
+    seas_starts >= 8 AND the rate clears an extreme threshold on the correct side (>=80% for an
+    NRFI lean, <=55% for YRFI, vs. a ~70% league baseline per src/11's own docstring). Chose
+    season over career as more "why today" relevant.
+  - _why_lineup_upgrade(r, want_nrfi): names a TEAM-LEVEL top-5-vs-pitcher matchup (not one named
+    batter — individual BvP samples are almost always too thin, and the user explicitly said
+    naming a specific batter-vs-pitcher was optional, not required) using the
+    {side}_top5_avg_obp_vs_pitcher / _top5_avg_bvp_pa columns already on the predictions row.
+    Requires avg PA >= 3.0 and OBP <= .220 (cold) or >= .400 (hot) vs. a ~.310 league baseline.
+  Both upgrade helpers return None when nothing clears the bar; the caller falls back to the
+  plain contrib_<group> label (e.g. "the pitcher NRFI track record"), prefixed with "the" and
+  lowercased for mid-sentence flow.
+
+VERIFIED (before touching the UI): ran _why_this_edge() directly against all 7 real games on
+today's slate — every output checked out against the underlying numbers. One case (SD@COL)
+correctly declined to name either starter despite pitcher_nrfi_record being the single largest
+contributor: both Tanner Gordon and Michael King actually have strong (high) season NRFI rates,
+even though the group's net contribution pointed toward YRFI for that game (the group aggregates
+more than just season NRFI% — career, home/away splits, ERA, etc. — so a single-stat heuristic
+won't always explain 100% of what a group captures). Naming either pitcher there would have read
+as contradictory to a reader looking at their own numbers; falling back to the neutral group
+description instead was the correct, safe behavior — exactly the "never force a name onto a
+signal that doesn't actually support it" principle from the spec, just manifesting as a
+wrong-direction signal rather than a too-thin sample. Separately exercised the three paths that
+didn't occur naturally in today's slate with synthetic rows (constructed by copying a real row
+and overriding specific fields): close-matchup fallback, lineup upgrade in both directions, and
+an extreme-OBP-but-insufficient-PA case (correctly declined). Restarted local Streamlit and
+confirmed in-browser on two real games (Drew Rasmussen's 85%-NRFI upgrade case, and a plain
+NO-EDGE group-label case) that the caption renders correctly positioned and reads naturally.
+
+SCOPE NOTE: card-level (landing page) version was NOT built, matching the spec's own "start with
+detail view for v1" recommendation — game_card() is unchanged.
+FILES CHANGED: app.py, claude-context.txt, claude-prompts.txt, USER_MANUAL.md.
+DEPLOY: committed and pushed to origin/main so Streamlit Community Cloud redeploys with the
+feature live.

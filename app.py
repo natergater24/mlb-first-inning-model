@@ -740,6 +740,120 @@ def page_detail(pk: int, pred: pd.DataFrame):
     section_history(r)
 
 
+# ── "why this edge" explanation ──────────────────────────────────────────
+# Thresholds are deliberate judgment calls (documented in claude-context.txt's
+# FUTURE PROJECT note) -- there's no single "correct" cutoff, these are chosen
+# to be selective enough that a named player/matchup always means something.
+_WHY_EDGE_MIN_SEAS_STARTS = 8       # season starts needed to trust a pitcher's season NRFI%
+_WHY_EDGE_NRFI_LOW = 55.0           # season NRFI% at/below this = clearly YRFI-prone pitcher
+_WHY_EDGE_NRFI_HIGH = 80.0          # season NRFI% at/above this = clearly NRFI-shutdown pitcher
+_WHY_EDGE_LEAGUE_NRFI = 70.0        # baseline (career NRFI% for >=20-start pitchers, per src/11)
+_WHY_EDGE_MIN_BVP_PA = 3.0          # avg PA per top-5 batter vs this pitcher, to trust the OBP
+_WHY_EDGE_OBP_LOW = 0.220           # top-5-vs-pitcher OBP at/below this = lineup going cold
+_WHY_EDGE_OBP_HIGH = 0.400          # top-5-vs-pitcher OBP at/above this = lineup hitting hard
+_WHY_EDGE_LEAGUE_OBP = 0.310
+_WHY_EDGE_MIN_CONTRIB = 0.05        # below this, no group's pull is worth calling "dominant"
+
+
+def _why_pitcher_upgrade(r, want_nrfi: bool) -> str | None:
+    """Name a specific starter's season NRFI% ONLY if it clears a real
+    significance bar (enough starts AND a genuinely extreme rate) -- never
+    forces a name onto a thin sample. Returns None to fall back to the
+    plain group-label description."""
+    profiles = load_pitcher_profiles()
+    best = None
+    for side in ("home", "away"):
+        pid, name = r.get(f"{side}_pitcher_id"), r.get(f"{side}_pitcher_name")
+        if pd.isna(pid) or not name:
+            continue
+        prow = profiles[profiles["pitcher_id"] == int(pid)]
+        if prow.empty:
+            continue
+        starts, pct = prow.iloc[0].get("seas_starts"), prow.iloc[0].get("seas_nrfi_pct")
+        if pd.isna(starts) or pd.isna(pct) or starts < _WHY_EDGE_MIN_SEAS_STARTS:
+            continue
+        pct = float(pct)
+        if want_nrfi and pct < _WHY_EDGE_NRFI_HIGH:
+            continue
+        if not want_nrfi and pct > _WHY_EDGE_NRFI_LOW:
+            continue
+        margin = abs(pct - _WHY_EDGE_LEAGUE_NRFI)
+        if best is None or margin > best[2]:
+            best = (name, pct, margin)
+    if not best:
+        return None
+    name, pct, _ = best
+    return (f"{name}'s NRFI-heavy season ({pct:.0f}% NRFI)" if want_nrfi else
+            f"{name}'s YRFI-prone season ({pct:.0f}% NRFI, well below average)")
+
+
+def _why_lineup_upgrade(r, want_nrfi: bool) -> str | None:
+    """Name a team's top-5-vs-pitcher matchup ONLY if the average sample size
+    is real AND the OBP is genuinely extreme. Team-level, not one named
+    batter -- individual BvP samples are too thin to trust for a headline."""
+    best = None
+    for side in ("home", "away"):
+        obp, pa = r.get(f"{side}_top5_avg_obp_vs_pitcher"), r.get(f"{side}_top5_avg_bvp_pa")
+        if pd.isna(obp) or pd.isna(pa) or pa < _WHY_EDGE_MIN_BVP_PA:
+            continue
+        obp = float(obp)
+        if want_nrfi and obp > _WHY_EDGE_OBP_LOW:
+            continue
+        if not want_nrfi and obp < _WHY_EDGE_OBP_HIGH:
+            continue
+        margin = abs(obp - _WHY_EDGE_LEAGUE_OBP)
+        if best is None or margin > best[2]:
+            best = (side, obp, margin)
+    if not best:
+        return None
+    side, obp, _ = best
+    team = r.get(f"{side}_team")
+    opp_pitcher = r.get(f"{'away' if side == 'home' else 'home'}_pitcher_name") or "the opposing pitcher"
+    return (f"{team}'s projected top-5 lineup going cold vs {opp_pitcher} "
+            f"({fmt_stat(obp)} OBP)" if want_nrfi else
+            f"{team}'s projected top-5 lineup hitting {opp_pitcher} hard "
+            f"({fmt_stat(obp)} OBP)")
+
+
+def _why_this_edge(r) -> str:
+    """1-2 sentence plain-English explanation of what's driving this game's
+    NRFI/YRFI lean. Default: names the dominant contributing group(s) only.
+    Upgrades to naming a specific pitcher or team-vs-pitcher matchup ONLY when
+    that number clears a real significance bar -- see the two helpers above."""
+    logit = r.get("base_model_logit")
+    if pd.isna(logit):
+        return ""
+    sign = 1 if logit > 0 else -1  # matches contrib_<group> sign: + pushes YRFI, - pushes NRFI
+    side = "YRFI" if sign > 0 else "NRFI"
+    want_nrfi = side == "NRFI"
+
+    contribs = {g: float(r.get(f"contrib_{g}") or 0.0) for g in WEIGHT_GROUPS}
+    aligned = sorted((gc for gc in contribs.items() if gc[1] * sign > 0),
+                     key=lambda gc: -abs(gc[1]))
+    if not aligned or abs(aligned[0][1]) < _WHY_EDGE_MIN_CONTRIB:
+        return f"⚖️ Close matchup — no single factor clearly drives the {side} lean."
+
+    meta = load_model_meta()
+    labels = meta.get("weighting", {}).get("group_labels", DEFAULT_LABELS)
+
+    pieces = []
+    for g, _ in aligned[:2]:
+        named = None
+        if g == "pitcher_nrfi_record":
+            named = _why_pitcher_upgrade(r, want_nrfi)
+        elif g in ("lineup_offense", "lineup_recent_form"):
+            named = _why_lineup_upgrade(r, want_nrfi)
+        if named:
+            pieces.append(named)
+        else:
+            lbl = labels.get(g, g).split("(")[0].strip()
+            pieces.append("the " + lbl[0].lower() + lbl[1:])
+
+    if len(pieces) == 1:
+        return f"📊 Driven mainly by {pieces[0]} — the model's strongest lean toward {side}."
+    return f"📊 Driven mainly by {pieces[0]}, with {pieces[1]} reinforcing the {side} lean."
+
+
 def section_prediction(r):
     st.subheader("1 · Model Prediction Summary")
     nrfi = float(r["model_nrfi_prob"])
@@ -761,6 +875,9 @@ def section_prediction(r):
         f"line-height:26px'>NRFI {nrfi*100:.0f}%</div>"
         f"<div style='width:{yrfi*100:.1f}%;background:#d73027;color:#fff;text-align:center;"
         f"line-height:26px'>YRFI {yrfi*100:.0f}%</div></div>", unsafe_allow_html=True)
+    why = _why_this_edge(r)
+    if why:
+        st.caption(why)
     st.write("")
 
     rows = []

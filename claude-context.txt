@@ -593,84 +593,67 @@ placeholder callout in the home-team Top-of-Order section. MORE DETAIL TO COME.
 Keep it strictly separated from the trained YRFI RandomForest + logistic surrogate — the
 "YOUR WEIGHTING" sliders and every probability/edge/EV in the app come only from that model.
 
-=== FUTURE PROJECT (requested 2026-09-17, not started) — "WHY THIS EDGE" BLURB ===
-User wants a brief 1-2 sentence, plain-English explanation on each game for that game's NRFI/YRFI
-lean — not just "the model favors NRFI at 62%" but why. Deferred (user near usage limit) — this
-note is the full spec + a recommended approach so a future session can start straight into
-implementation.
-REFINED 2026-09-17 (same day, follow-up): naming a specific batter-vs-pitcher matchup is NOT a
-requirement — only do it when the historical BvP matchup is actually significant (a real sample
-size AND an extreme value, not just whoever happens to have the highest number on a handful of
-PA). Otherwise the blurb should just say which of the 1-2 dominant contributing GROUPS explain
-the lean (e.g. "driven mainly by the pitching matchup and recent lineup form"), with no player
-named at all. So there are effectively two tiers of output: (1) default/fallback — name the
-dominant group(s) only; (2) upgrade — if a specific pitcher stat or BvP matchup clears a
-significance bar, name that player/matchup instead of (or alongside) the group description.
+=== "WHY THIS EDGE" BLURB (requested 2026-09-17, BUILT 2026-09-18) ===
+Detail view Section 1 now shows a 1-2 sentence, plain-English explanation of what's driving each
+game's NRFI/YRFI lean, right under the probability bar (before the book-lines table). Two-tier
+design per the 2026-09-17 refinement (naming a player is conditional, never required):
+  - DEFAULT: names the dominant contrib_<group>(s) only, e.g. "📊 Driven mainly by the pitcher
+    NRFI track record, with the weather reinforcing the NRFI lean."
+  - UPGRADE: names a specific pitcher or team-vs-pitcher matchup instead, but ONLY when it clears
+    a real significance bar — e.g. "📊 Driven mainly by Drew Rasmussen's NRFI-heavy season (85%
+    NRFI), with the ballpark run environment reinforcing the NRFI lean."
+  - "⚖️ Close matchup — no single factor clearly drives the {side} lean." when nothing meaningfully
+    dominates (answers the old "what to show for NO EDGE games" open question).
 
-WHERE IT WOULD SURFACE:
-  - Detail view: a new line/callout in section_prediction() (Section 1), near the Best Bet box.
-  - Landing card: maybe a shorter one-liner under the recommendation badge/edge row in
-    game_card() — real estate is tighter there, so possibly detail-view-only for v1.
+IMPLEMENTATION (app.py, all pure presentation-layer — no model/training/schema changes):
+  _why_this_edge(r): direction comes from base_model_logit's sign (+ pushes YRFI, - pushes NRFI —
+    matches contrib_<group> sign convention, verified against real rows before trusting it) rather
+    than model_yrfi_prob, specifically because isotonic calibration collapses many games onto
+    identical probabilities (documented cluster caveat) while the underlying logit still varies
+    game to game — the finer-grained signal was the right one to explain from. Takes the top 1-2
+    WEIGHT_GROUPS whose contrib_<group> sign AGREES with that direction (ranked by |contrib|,
+    ignoring contrib_other, which isn't a slider group) — deliberately does NOT try to explain
+    away groups pulling the other direction; v1 just names what supports the actual pick. Below
+    _WHY_EDGE_MIN_CONTRIB (0.05 log-odds) on the top group, falls back to the "close matchup" line.
+  _why_pitcher_upgrade(r, want_nrfi): compares home vs away starter's SEASON (not career) NRFI% —
+    season is more current/relevant than a career number for "why today." Requires seas_starts >=
+    8 (a season sample big enough to trust a rate stat; Tanner Gordon's 9 starts was the closest
+    real case that still cleared it) AND the rate on the correct side of the lean (>=80% NRFI to
+    cite for an NRFI lean, <=55% to cite for a YRFI lean — league baseline is ~70% per src/11's
+    docstring, ">=20-start pitchers" caveat). Whichever of the two pitchers deviates furthest from
+    that baseline wins, if either clears the bar.
+  _why_lineup_upgrade(r, want_nrfi): uses the TEAM-LEVEL {side}_top5_avg_obp_vs_pitcher /
+    {side}_top5_avg_bvp_pa columns already on the predictions row (NOT a single named batter —
+    individual BvP samples are almost always too thin per batter; the team-5-batter average is
+    the more trustworthy number, and the user's own instruction was that naming a specific
+    batter-vs-pitcher was optional, not required, so this scope simplification is intentional, not
+    a shortfall). Requires avg PA >= 3.0 (a real, if modest, cumulative sample) AND OBP <= .220
+    (cold, supports an NRFI lean) or >= .400 (hot, supports YRFI) vs. a ~.310 league baseline.
+  Both upgrade helpers return None when nothing clears the bar, and the caller falls back to the
+  plain group-label phrasing (with "the" prepended + lowercased for mid-sentence flow) — this
+  fallback path is what actually fired for e.g. Michael King/Tanner Gordon (SD@COL) despite
+  pitcher_nrfi_record being the single largest contributor in that game: BOTH pitchers had strong
+  (high) season NRFI rates even though the group's contribution pointed toward YRFI for that game
+  (the group aggregates more than season NRFI% alone — career, home/away splits, ERA, etc. — so
+  the single stat this heuristic checks doesn't always explain 100% of what the group captures).
+  Naming either pitcher there would have read as contradictory; declining and falling back to the
+  neutral group description was the correct, safe behavior, not a bug — this is exactly the
+  "never force a name onto a thin/wrong-direction signal" principle the spec called for, just
+  showing up as "wrong direction" rather than "thin sample."
+  Card-level version: NOT built (per the spec's own "detail-view-only for v1" recommendation) —
+  game_card() on the landing page is unchanged.
 
-WHAT DATA ALREADY EXISTS TO BUILD THIS (no new model or training needed — this is a presentation-
-layer / explainability feature over data the model already computed):
-  - Per-game GROUP-level attribution already exists: contrib_<group> columns in
-    todays_yrfi_predictions.parquet (pitcher_nrfi_record, pitcher_stuff, pitcher_last5,
-    lineup_offense, lineup_recent_form, ballpark, weather) + base_model_logit — this is exactly
-    "how much log-odds did each factor group contribute," produced by the logistic surrogate
-    trained in src/13 (see the ⚙️ Model weighting expander notes under DASHBOARD/LANDING above for
-    the full mechanism). This tells you WHICH group dominates the edge for a given game, but not
-    which NAMED player within that group to credit.
-  - Named-entity stats already computed per game (used elsewhere in the dashboard, so already
-    present on the row or in the supporting parquets): home/away pitcher name + career/season/L5
-    NRFI%, 1st-inn ERA, K rate, BB rate, hard-hit% allowed, first-pitch-strike rate, velo; away/
-    home projected top-5 batters + BvP OBP, L7/L30 OBP, season HR/PA, hard-hit%, power score.
-
-RECOMMENDED APPROACH (v1, heuristic/templated — NOT an LLM call per game; deterministic, no
-hallucination risk, no added latency/cost for 10+ games/day):
-  1. For the game, find the 1-2 largest-|contrib_<group>| groups (the ones already driving the
-     model's own lean, consistent with what "YOUR WEIGHTING"'s effective-weighting bar already
-     shows — reuse that logic/labels rather than inventing new ones).
-  2. DEFAULT OUTPUT (no significance bar to clear): just name the dominant group(s) using the
-     existing GROUP_LABELS / DEFAULT_LABELS wording already used by the weighting sliders (e.g.
-     "Pitcher NRFI track record" / "Lineup recent form") — no specific player required. This is
-     the fallback for the common case and should look genuinely fine on its own, not like a
-     degraded version of the "real" blurb.
-  3. UPGRADE (only when significant): within a dominant PERSONNEL group (pitcher_nrfi_record/
-     pitcher_stuff/pitcher_last5/lineup_offense/lineup_recent_form — not ballpark/weather, which
-     never get a named "player"), check whether a specific pitcher stat or BvP matchup clears a
-     real significance bar before naming it:
-       - Pitcher-level stats (NRFI%, hard-hit%, last-5 trend): need a minimum start count (the
-         model already flags small samples elsewhere — reuse whatever GS/starts threshold pattern
-         section_pitcher already uses) AND a genuinely extreme value vs. league average, not just
-         "higher than the other guy" by a trivial margin.
-       - BvP-specific matchups: need a real PA sample (reuse the existing "🚫 no matchup data at 0
-         PA" / "⚠️ small sample under 5 PA" thresholds already used in section_batters — do NOT
-         name a BvP number built on a handful of PA) AND an extreme OBP/AVG in that sample.
-     If (and only if) a specific stat/matchup clears its bar, name that pitcher or batter-vs-
-     pitcher matchup instead of (or alongside) the plain group description. If nothing clears the
-     bar, fall back to step 2's group-only phrasing — never force a name onto a thin sample just
-     to sound more specific.
-  4. Small per-group + per-tier template -> 1 sentence each, combine top 1-2 into the final 1-2
-     sentence blurb. Needs actual copywriting/tone work when this gets picked up — this note only
-     specifies the mechanism, not final wording.
-  5. Where to compute: recommend doing this LIVE in app.py at render time (a new small helper
-     function, e.g. _why_this_edge(r)), NOT baked into src/14's output columns — every input it
-     needs (contrib_<group>, pitcher/batter stat columns) is already on the row or one dataframe
-     lookup away, it's cheap arithmetic (no API calls), and keeping it presentation-layer avoids
-     touching the model/training pipeline or adding new parquet schema/versioning concerns.
-
-OPEN QUESTIONS TO RESOLVE WHEN PICKING THIS UP:
-  - Exact tone/wording — templated sentences will need real drafting/iteration, not just "insert
-    numbers into a format string."
-  - What to show for "NO EDGE" games (no single dominant factor) — skip the blurb, or say
-    something like "a close matchup with no single dominant factor"?
-  - Exact significance thresholds for the "upgrade" tier (min starts for a pitcher stat, min PA
-    for a BvP matchup, how extreme vs. league average counts as "extreme") — the 2026-09-17
-    refinement made naming a player conditional rather than required, but the actual cutoff
-    numbers still need to be picked when this is built.
-  - Card-level (short) version vs. detail-view-only for v1 — start with detail view, expand to
-    cards later if it reads well.
+VERIFIED: ran _why_this_edge() directly against all 7 of today's real games (2026-09-18) before
+touching the UI — every output read correctly given each game's actual underlying numbers,
+including the SD@COL fallback case above. Separately exercised the three paths that didn't occur
+naturally in today's slate with synthetic rows: "close matchup" (all contribs tiny) -> correct
+neutral message; lineup upgrade in both directions (cold NRFI-supporting lineup, hot
+YRFI-supporting lineup) -> both named the team + opposing pitcher + OBP correctly; insufficient
+BvP sample (avg PA below 3.0 despite an extreme OBP) -> correctly declined to name it and fell
+back to the group label. Confirmed in-browser: restarted local Streamlit, opened the ATH@TB game
+(Drew Rasmussen's 85% NRFI season, real upgrade case) and a NO-EDGE game (group-label-only case)
+and read the rendered caption directly under the probability bar in both — reads naturally,
+correctly placed, doesn't clutter the layout.
 
 === OUTSTANDING / NEXT STEPS ===
   - RECURRING: run src/backfill_feeds.py + src/02 --build-lineup-history weekly (or fold recent
@@ -712,15 +695,10 @@ OPEN QUESTIONS TO RESOLVE WHEN PICKING THIS UP:
     persist durably, with no Streamlit Cloud redeploy side effect. Only worth building if hosted-
     side logging (away from the local machine) actually becomes needed — see BET TRACKER's
     HOSTED-SIDE PERSISTENCE note above for the full comparison against a GitHub API write-back.
-  - FUTURE PROJECT (requested 2026-09-17, not started) — "WHY THIS EDGE" BLURB: a 1-2 sentence,
-    plain-English explanation per game for that game's NRFI/YRFI lean (not just the probability/
-    edge numbers already shown). NOT required to name a specific batter-vs-pitcher matchup —
-    default is to just name which of the 1-2 dominant contributing GROUPS explain the lean; only
-    name a specific player/matchup when it clears a real significance bar (meaningful sample size
-    AND an extreme value). Full spec + a recommended two-tier heuristic/templated approach (uses
-    existing contrib_<group> attribution + named player stats already computed per game — no new
-    model/training needed) written up in its own section right after FUTURE PROJECT — PER-PITCH
-    BATTED-BALL MODEL above. Deferred (user near usage limit) — pick up there.
+  - DONE 2026-09-18: "WHY THIS EDGE" BLURB — see its own section right after FUTURE PROJECT —
+    PER-PITCH BATTED-BALL MODEL above for the full implementation writeup. Card-level (short)
+    version was NOT built (detail-view-only, per the spec's own v1 recommendation) — could be a
+    future follow-up if it reads well enough to want on the landing page too.
   - Consider point-in-time pitcher NRFI aggregates to remove the look-ahead bias in training.
   - Optional: switch calibration to sigmoid if isotonic plateaus stay too coarse.
   - FUTURE (own section above): per-pitch batted-ball model, shown alongside — not inside — the

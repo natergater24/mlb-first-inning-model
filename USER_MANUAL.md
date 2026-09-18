@@ -155,8 +155,13 @@ Single page, three views.
   table DK/FD/MGM/CZR with ⚡/↗ links (right); recommended-bet badge + edge% +
   EV/$100 + "View details →"; a collapsed **➕ Log a Bet** at the bottom.
 
-**Detail view (7 sections + Track a Bet):** model summary + book table, then
-**Track a Bet**, then weather/park (with the HR-factor explainer) · away pitcher
+**Detail view (7 sections + Track a Bet):** model summary + book table — including
+a **"Why this edge"** 1-2 sentence caption right under the probability bar (added
+2026-09-18) naming what's actually driving the lean; it only names a specific
+pitcher or team-vs-pitcher matchup when the number is genuinely significant
+(enough starts/PA and a real outlier value), otherwise it just names the
+dominant factor group (e.g. "the pitcher NRFI track record") — then **Track a
+Bet**, then weather/park (with the HR-factor explainer) · away pitcher
 profile · home pitcher profile · away team projected top-5 vs pitcher · home team
 projected top-5 · historical YRFI context.
 
