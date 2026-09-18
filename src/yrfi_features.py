@@ -64,6 +64,11 @@ PITCHER_FEATS = [
     "first_inn_k_rate", "first_inn_bb_rate", "first_inn_hard_hit",
     "first_pitch_strike_rate", "avg_velo", "primary_pitch_code",
 ]
+# Sample-size / data-quality signals -- deliberately NOT part of any
+# FEATURE_GROUPS entry (see the "Columns not named in any group... always
+# contribute at weight 1" comment above) since these describe confidence in
+# the data, not a team-strength factor the dashboard's sliders should scale.
+PITCHER_CONFIDENCE_FEATS = ["starts_log", "seas_starts_log", "is_debut"]
 TOP5_FEATS = [
     "avg_obp_vs_pitcher", "avg_bvp_pa", "avg_l7_obp", "avg_l30_obp",
     "avg_seas_hr_per_pa", "avg_hard_hit", "power_score",
@@ -114,6 +119,9 @@ def _pitcher_features(pid, prof_map: dict, prefix: str) -> dict:
     if p is None:
         for f in PITCHER_FEATS:
             out[f"{prefix}_pitcher_{f}"] = np.nan
+        out[f"{prefix}_pitcher_starts_log"] = 0.0
+        out[f"{prefix}_pitcher_seas_starts_log"] = 0.0
+        out[f"{prefix}_pitcher_is_debut"] = 1
         return out
     out[f"{prefix}_pitcher_career_nrfi_pct"] = _shrink(
         p.get("nrfi_pct"), p.get("total_starts"), NRFI_LEAGUE_PRIOR, SHRINK_K_CAREER)
@@ -129,6 +137,11 @@ def _pitcher_features(pid, prof_map: dict, prefix: str) -> dict:
     out[f"{prefix}_pitcher_avg_velo"] = p.get("first_inn_avg_velo")
     out[f"{prefix}_pitcher_primary_pitch_code"] = PRIMARY_PITCH_CODES.get(
         p.get("primary_pitch"), -1)
+    total_starts = p.get("total_starts")
+    seas_starts = p.get("seas_starts")
+    out[f"{prefix}_pitcher_starts_log"] = float(np.log1p(total_starts)) if pd.notna(total_starts) else 0.0
+    out[f"{prefix}_pitcher_seas_starts_log"] = float(np.log1p(seas_starts)) if pd.notna(seas_starts) else 0.0
+    out[f"{prefix}_pitcher_is_debut"] = 0
     return out
 
 
@@ -219,6 +232,8 @@ def feature_columns() -> list[str]:
     cols = []
     for side in ("home", "away"):
         cols += [f"{side}_pitcher_{f}" for f in PITCHER_FEATS]
+    for side in ("home", "away"):
+        cols += [f"{side}_pitcher_{f}" for f in PITCHER_CONFIDENCE_FEATS]
     for side in ("away", "home"):
         cols += [f"{side}_top5_{f}" for f in TOP5_FEATS]
     cols += CONTEXT_FEATS
