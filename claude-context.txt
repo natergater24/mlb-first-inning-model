@@ -120,6 +120,23 @@ Kept & updated:
                                        — REAL per-selection uuid, works. ⚡ in the dashboard.
                             BetMGM   — sports.nj.betmgm.com/en/sports?options=<a-b-c> — REAL,
                                        last segment per side. ⚡ in the dashboard.
+                                       FIXED 2026-09-18: SGO always returns this NJ-scoped, even
+                                       though the user is in NC. Checked SGO's docs (data-types/odds,
+                                       data-types/bookmakers, faq) — no region/state param exists to
+                                       request a different state's subdomain. fetch_sgo_first_inning()
+                                       now does a plain string-replace on the BetMGM deeplink only
+                                       (short == "MGM"): sports.nj.betmgm.com -> sports.nc.betmgm.com.
+                                       Reasoning: BetMGM runs one shared odds/option-id platform
+                                       across states, just geofenced by subdomain, so the same
+                                       options=<ids> should resolve under any state's subdomain.
+                                       Verified the swapped URL appears correctly as the live href on
+                                       the ⚡ instant-betslip link in the dashboard (localhost), but
+                                       could NOT click-test it end-to-end on BetMGM's real site —
+                                       claude-in-chrome refuses navigation to gambling sites ("not
+                                       allowed due to safety restrictions"). If it ever 404s/misroutes
+                                       for the user, revert the .replace() call in 04_fetch_odds.py.
+                                       Caesars is also NJ-scoped per the same docs but was left
+                                       untouched (user only asked about BetMGM).
                             FanDuel  — sportsbook.fanduel.com/addToBetslip?marketId=<per-game>&
                                        selectionId=<GENERIC>. The selectionId is a TEMPLATE id
                                        (7017905 Over / 7017906 Under for EVERY game); FanDuel
@@ -640,8 +657,14 @@ IMPLEMENTATION (app.py, all pure presentation-layer — no model/training/schema
   neutral group description was the correct, safe behavior, not a bug — this is exactly the
   "never force a name onto a thin/wrong-direction signal" principle the spec called for, just
   showing up as "wrong direction" rather than "thin sample."
-  Card-level version: NOT built (per the spec's own "detail-view-only for v1" recommendation) —
-  game_card() on the landing page is unchanged.
+  Card-level version: BUILT 2026-09-18 (user asked for it after seeing the detail-view version) —
+  game_card() now calls the same _why_this_edge(r) and renders `st.caption(why)` right after the
+  "View details →" button, before the "➕ Log a Bet" expander. No new logic — reuses the exact
+  detail-view helper (Python resolves the call at runtime, so calling it from game_card(), which is
+  defined earlier in app.py than _why_this_edge(), is fine). Verified in-browser on localhost:
+  landing-page cards now show the same caption text/style as the detail view (e.g. "📊 Driven
+  mainly by the pitcher NRFI track record, with the lineup recent form reinforcing the YRFI lean.")
+  for ATH@CLE and PHI@NYM.
 
 VERIFIED: ran _why_this_edge() directly against all 7 of today's real games (2026-09-18) before
 touching the UI — every output read correctly given each game's actual underlying numbers,
@@ -696,9 +719,13 @@ correctly placed, doesn't clutter the layout.
     side logging (away from the local machine) actually becomes needed — see BET TRACKER's
     HOSTED-SIDE PERSISTENCE note above for the full comparison against a GitHub API write-back.
   - DONE 2026-09-18: "WHY THIS EDGE" BLURB — see its own section right after FUTURE PROJECT —
-    PER-PITCH BATTED-BALL MODEL above for the full implementation writeup. Card-level (short)
-    version was NOT built (detail-view-only, per the spec's own v1 recommendation) — could be a
-    future follow-up if it reads well enough to want on the landing page too.
+    PER-PITCH BATTED-BALL MODEL above for the full implementation writeup. Card-level (landing
+    page) version was added same-day, same section — both detail view and landing cards now show it.
+  - DONE 2026-09-18: BETMGM NC FIX — see 04_fetch_odds.py section above (~line 121). SGO's BetMGM
+    deeplinks are always NJ-scoped; string-replaced to NC at capture time since SGO's API has no
+    region param. Reasoning-based fix, NOT click-tested against BetMGM's real site (browser tool
+    blocks gambling-site navigation) — only verified the href renders as sports.nc.betmgm.com in the
+    dashboard. Ask the user to confirm the link actually resolves once they click it for real.
   - Consider point-in-time pitcher NRFI aggregates to remove the look-ahead bias in training.
   - Optional: switch calibration to sigmoid if isotonic plateaus stay too coarse.
   - FUTURE (own section above): per-pitch batted-ball model, shown alongside — not inside — the

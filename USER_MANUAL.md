@@ -131,7 +131,10 @@ Neither restarts Streamlit; use `launch.sh` or Option B for that.
   once/day; don't `--force-refresh` repeatedly when quota is low.
 - **Instant "add to betslip" (⚡)** works for **Caesars & BetMGM** only.
   DraftKings has no deeplink; FanDuel's is a template id that FD rejects — both
-  fall back to the book's MLB lobby (↗). Deeplinks are US/NJ-scoped.
+  fall back to the book's MLB lobby (↗). Deeplinks are US/NJ-scoped, except
+  BetMGM's, which is rewritten to the NC subdomain (`sports.nc.betmgm.com`)
+  before display (added 2026-09-18 — SGO's API has no region param, so this is
+  a string-replace at capture time; Caesars is still NJ-scoped).
 - bet365 / Fanatics are on neither feed for MLB (see `claude-context.txt`).
 - If neither source returns first-inning data, `04` writes an empty file and the
   dashboard falls back to model-only.
@@ -153,7 +156,9 @@ Single page, three views.
 - One card per game: teams + records + probable pitchers + NRFI% (left);
   both model odds with the better-value side marked ◄ (middle); 2×4 book-lines
   table DK/FD/MGM/CZR with ⚡/↗ links (right); recommended-bet badge + edge% +
-  EV/$100 + "View details →"; a collapsed **➕ Log a Bet** at the bottom.
+  EV/$100 + "View details →"; a **"Why this edge"** 1-2 sentence caption (added
+  2026-09-18, same logic as the detail view below) naming what's driving the
+  lean; then a collapsed **➕ Log a Bet** at the bottom.
 
 **Detail view (7 sections + Track a Bet):** model summary + book table — including
 a **"Why this edge"** 1-2 sentence caption right under the probability bar (added

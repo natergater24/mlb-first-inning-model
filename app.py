@@ -656,6 +656,10 @@ def game_card(r):
             st.session_state["game"] = pk
             st.rerun()
 
+        why = _why_this_edge(r)
+        if why:
+            st.caption(why)
+
         # ── inline bet logger (compact, collapsed by default) ─────────────
         with st.expander("➕ Log a Bet", expanded=False, key=f"bet_exp_{pk}"):
             _log_bet_form_compact(r, key_prefix=f"land_{pk}")

@@ -1608,3 +1608,49 @@ detail view for v1" recommendation — game_card() is unchanged.
 FILES CHANGED: app.py, claude-context.txt, claude-prompts.txt, USER_MANUAL.md.
 DEPLOY: committed and pushed to origin/main so Streamlit Community Cloud redeploys with the
 feature live.
+
+=== 2026-09-18 — BUILT: LANDING-PAGE "WHY THIS EDGE" CARD BLURB + BETMGM NC LINK FIX ===
+TASK: user asked for two things in one message: (1) put the "why this edge" blurb (built earlier
+today, detail-view-only) on the landing-page game cards too; (2) the BetMGM instant-betslip link
+was going to sports.nj.betmgm.com but should go to the NC (sports.nc.betmgm.com) site.
+
+PART 1 — CARD-LEVEL BLURB: trivial reuse, not a new feature. Added
+`why = _why_this_edge(r); if why: st.caption(why)` to game_card() in app.py, right after the
+"View details →" button and before the "➕ Log a Bet" expander. Calls the exact same helper the
+detail view already uses (Python resolves the call at runtime, so it's fine that _why_this_edge
+is defined later in the file than game_card()) — no duplicated logic, no new thresholds.
+
+PART 2 — BETMGM NC FIX: checked SportsGameOdds' own docs first (data-types/odds, data-types/
+bookmakers, faq — two guessed doc URLs 404'd before finding the real ones via the docs nav page)
+to see if there's a region/state parameter to request a different subdomain. There isn't — SGO
+always returns BetMGM's deeplink NJ-scoped, no matter the caller's state. Fixed in
+fetch_sgo_first_inning() (src/04_fetch_odds.py) with a targeted string-replace scoped to BetMGM
+only (`short == "MGM"`): sports.nj.betmgm.com -> sports.nc.betmgm.com on the deeplink right where
+it's captured from SGO's response. Reasoning: BetMGM runs one shared odds/option-id platform
+across every state it operates in, just geofenced by subdomain, so the same `options=<ids>`
+should resolve the same way under any state's subdomain. Caesars is also NJ-scoped per the same
+docs but was deliberately left alone — the user only asked about BetMGM.
+
+VERIFICATION: py_compile clean on app.py and src/04_fetch_odds.py. Regenerated
+data/odds/yrfi_odds_2026-09-18.parquet and confirmed yrfi_link_MGM/nrfi_link_MGM now read
+https://sports.nc.betmgm.com/en/sports?options=... Regenerated
+data/processed/todays_yrfi_predictions.parquet (src/14) so the corrected links flow through to
+the dashboard. Restarted local Streamlit and confirmed in-browser: landing-page cards now show
+the same caption text/style as the detail view (checked ATH@CLE and PHI@NYM); read the live href
+off the ⚡ instant-betslip link for ATH@CLE's MGM row via the accessibility tree and confirmed it
+resolves to sports.nc.betmgm.com — book-lines table, best-book links, and other ⚡/↗ badges all
+still render correctly, no regression from the field-level change.
+
+HONEST LIMITATION (disclosed to user): could NOT click-test the NC BetMGM link end-to-end on
+BetMGM's real site — claude-in-chrome refuses navigation to gambling/betting domains ("not
+allowed due to safety restrictions"). The fix is reasoning-based (confirmed via SGO's own docs
+that no API parameter exists, plus the shared-platform assumption above), not empirically proven
+against BetMGM's live site. Asked the user to confirm the link actually resolves once they click
+it for real; if it 404s/misroutes, the fix is a single .replace() call to revert in
+src/04_fetch_odds.py.
+
+FILES CHANGED: app.py, src/04_fetch_odds.py, data/odds/yrfi_odds_2026-09-18.parquet,
+data/processed/todays_yrfi_predictions.parquet, claude-context.txt, claude-prompts.txt,
+USER_MANUAL.md.
+DEPLOY: committed and pushed to origin/main so Streamlit Community Cloud redeploys with both
+fixes live.

@@ -826,10 +826,19 @@ def fetch_sgo_first_inning(date_str: str) -> tuple[pd.DataFrame, dict]:
                 if am is None:
                     continue
                 dl = bk_val.get("deeplink")
+                dl = dl if isinstance(dl, str) and dl else None
+                if dl and short == "MGM":
+                    # SGO's BetMGM deeplinks always come back NJ-scoped
+                    # (sports.nj.betmgm.com) -- there's no region/state param in
+                    # their API to request otherwise (checked their docs + FAQ).
+                    # BetMGM runs the same underlying odds/market platform across
+                    # states, just gated by subdomain, so the option ids should
+                    # resolve the same way under a different state's subdomain.
+                    dl = dl.replace("sports.nj.betmgm.com", "sports.nc.betmgm.com")
                 rows.append({"home_team": home, "away_team": away, "book": short,
                              "side": sidelbl, "american": am,
                              "implied": american_to_prob(am),
-                             "deeplink": dl if isinstance(dl, str) and dl else None})
+                             "deeplink": dl})
     df = pd.DataFrame(rows)
     if len(df):
         # Reject deeplinks whose *selection* token repeats across games — some
