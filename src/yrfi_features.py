@@ -43,11 +43,35 @@ PRIMARY_PITCH_CODES = {"fb": 0, "sl": 1, "cb": 2, "ch": 3, None: -1, np.nan: -1}
 # sportsbook had the game near a coin flip.
 NRFI_LEAGUE_PRIOR = 70.0   # matches app.py's _WHY_EDGE_LEAGUE_NRFI constant
 SHRINK_K_CAREER = 12.0     # ~12 "pseudo-starts" of prior weight
-SHRINK_K_SEASON = 12.0
+# Re-tuned 2026-09-21: k=12 for season left a 4-start rate (e.g. Mason
+# Barnett's 25% seas_nrfi_pct in the ATH@CLE case that motivated this file's
+# shrinkage) still moving the model almost as hard as before. A method-of-
+# moments credibility estimate against established (>=20-start) pitchers'
+# career nrfi_pct (between-pitcher variance vs. binomial sampling variance)
+# came back far higher than 12 -- noisy (it's a small residual of two close
+# numbers) but directionally consistent with under-shrinkage. Moved to 25 as
+# a validated middle ground, not the raw estimate: re-checked against the
+# 2024 aggregate backtest (go/no-go gate) and the ATH@CLE case directly
+# before shipping, see docs/superpowers/plans/2026-09-18-pitcher-sample-size-model-fix.md.
+SHRINK_K_SEASON = 25.0
 SHRINK_K_L5 = 4.0          # L5's full sample is only 5 starts -- a k of 12
                            # would swamp it completely; 4 tempers without
                            # neutering it (a perfect 5/5 still moves ~4/9 of
                            # the way to the prior, not all the way).
+
+# Added 2026-09-21: first_inn_era is the same kind of small-sample statistic
+# as the NRFI-rate features above (computed from the same total_starts) but
+# was never shrunk in the first pass -- it's highly correlated with
+# career_nrfi_pct, so once that feature's signal was pulled toward the
+# prior, the model recovered a large chunk of it from era instead (its
+# logistic-surrogate coefficient jumped ~6x on retrain, confirmed against
+# the ATH@CLE case: Barnett's raw 11.0 career first_inn_era on 9 starts vs a
+# league (>=15-start pitchers) mean of ~4.85-5.05). Same shrink treatment,
+# same n (total_starts), same k as career_nrfi_pct.
+ERA_LEAGUE_PRIOR = 4.85    # start-weighted league mean across all pitchers
+                           # (4.86); matches the established (>=15-start)
+                           # cohort's mean (5.05) and median (4.82) closely.
+SHRINK_K_ERA = 12.0
 
 
 def _shrink(rate: float | None, n: float | None, prior: float, k: float) -> float:
@@ -129,7 +153,8 @@ def _pitcher_features(pid, prof_map: dict, prefix: str) -> dict:
         p.get("seas_nrfi_pct"), p.get("seas_starts"), NRFI_LEAGUE_PRIOR, SHRINK_K_SEASON)
     out[f"{prefix}_pitcher_l5_nrfi_pct"] = _shrink(
         p.get("l5_nrfi_pct"), p.get("l5_starts"), NRFI_LEAGUE_PRIOR, SHRINK_K_L5)
-    out[f"{prefix}_pitcher_first_inn_era"] = p.get("first_inn_era")
+    out[f"{prefix}_pitcher_first_inn_era"] = _shrink(
+        p.get("first_inn_era"), p.get("total_starts"), ERA_LEAGUE_PRIOR, SHRINK_K_ERA)
     out[f"{prefix}_pitcher_first_inn_k_rate"] = p.get("first_inn_k_rate")
     out[f"{prefix}_pitcher_first_inn_bb_rate"] = p.get("first_inn_bb_rate")
     out[f"{prefix}_pitcher_first_inn_hard_hit"] = p.get("first_inn_hard_hit_allowed")

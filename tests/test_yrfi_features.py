@@ -54,3 +54,28 @@ def test_confidence_features_present_in_feature_columns():
         assert f"{side}_pitcher_starts_log" in cols
         assert f"{side}_pitcher_seas_starts_log" in cols
         assert f"{side}_pitcher_is_debut" in cols
+
+def test_era_is_shrunk_toward_league_prior_for_thin_sample():
+    # Mason Barnett's real case: 11.0 career first_inn_era over 9 starts,
+    # previously fed raw -- the secondary driver behind the model still
+    # pricing ATH@CLE near its original overconfident level after Task 1's
+    # NRFI-rate shrinkage alone.
+    from yrfi_features import ERA_LEAGUE_PRIOR, SHRINK_K_ERA
+    prof_map = {686930: {"total_starts": 9, "first_inn_era": 11.0}}
+    out = _pitcher_features(686930, prof_map, "away")
+    expected = round((9 * 11.0 + SHRINK_K_ERA * ERA_LEAGUE_PRIOR) / (9 + SHRINK_K_ERA), 4)
+    assert out["away_pitcher_first_inn_era"] == expected
+    assert out["away_pitcher_first_inn_era"] < 11.0  # pulled down from the raw outlier
+    assert out["away_pitcher_first_inn_era"] > ERA_LEAGUE_PRIOR  # not fully to the prior
+
+def test_era_barely_moves_for_established_pitcher():
+    prof_map = {1: {"total_starts": 200, "first_inn_era": 5.5}}
+    out = _pitcher_features(1, prof_map, "home")
+    assert 5.3 < out["home_pitcher_first_inn_era"] < 5.5
+
+def test_debut_pitcher_era_still_nan():
+    # p is None (no profile row at all) -- unaffected by the era shrink,
+    # same as the three NRFI-rate features; stays np.nan for median fallback.
+    import math
+    out = _pitcher_features(999999, {}, "home")
+    assert math.isnan(out["home_pitcher_first_inn_era"])
