@@ -79,3 +79,30 @@ def test_debut_pitcher_era_still_nan():
     import math
     out = _pitcher_features(999999, {}, "home")
     assert math.isnan(out["home_pitcher_first_inn_era"])
+
+def test_blend_neutralizes_debut_pitcher_regardless_of_k():
+    from yrfi_features import blend_toward_neutral
+    # ATH@CLE's real case: Espino is a total debut (0 starts) -- the game
+    # should land at an exact coin flip no matter how extreme the raw model
+    # output was, and no matter the other side's start count.
+    assert blend_toward_neutral(0.8438, home_starts=0, away_starts=9) == 0.5
+    assert blend_toward_neutral(0.05, home_starts=0, away_starts=200) == 0.5
+
+def test_blend_barely_moves_established_pair():
+    from yrfi_features import blend_toward_neutral
+    # Skenes/Dobnak's real case: 84 vs 31 career starts.
+    result = blend_toward_neutral(0.4061, home_starts=84, away_starts=31)
+    assert 0.40 < result < 0.42
+
+def test_blend_weight_formula():
+    from yrfi_features import blend_toward_neutral, CONFIDENCE_BLEND_K
+    p, h, a = 0.9, 20, 5   # min_starts=5, the thinner side sets the weight
+    expected_weight = 5 / (5 + CONFIDENCE_BLEND_K)
+    expected = 0.5 + (p - 0.5) * expected_weight
+    assert blend_toward_neutral(p, h, a) == expected
+
+def test_blend_handles_nan_starts_as_zero():
+    from yrfi_features import blend_toward_neutral
+    import math
+    assert blend_toward_neutral(0.9, home_starts=float("nan"), away_starts=50) == 0.5
+    assert blend_toward_neutral(0.9, home_starts=None, away_starts=50) == 0.5

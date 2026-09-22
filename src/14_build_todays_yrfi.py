@@ -30,7 +30,8 @@ ODDS = ROOT / "data" / "odds"
 MODELS = ROOT / "data" / "models"
 
 sys.path.insert(0, str(ROOT / "src"))
-from yrfi_features import build_game_features, feature_columns, FEATURE_GROUPS  # noqa: E402
+from yrfi_features import (build_game_features, feature_columns, FEATURE_GROUPS,  # noqa: E402
+                           blend_toward_neutral, CONFIDENCE_BLEND_K)
 from park_factors import get_park  # noqa: E402
 
 TODAY = date.today().isoformat()
@@ -214,9 +215,19 @@ def main() -> int:
         feat = build_game_features(gdf, prof_map, sbt,
                                    weather if len(weather) else None)
         X = feat[feat_cols].apply(pd.to_numeric, errors="coerce").fillna(med).values
-        p_yrfi = float(model.predict_proba(X)[0, 1])
+        h_starts = np.expm1(feat["home_pitcher_starts_log"].iloc[0])
+        a_starts = np.expm1(feat["away_pitcher_starts_log"].iloc[0])
+        min_starts = min(h_starts, a_starts)
+        confidence_weight = min_starts / (min_starts + CONFIDENCE_BLEND_K)
+
+        p_yrfi_raw = float(model.predict_proba(X)[0, 1])
+        p_yrfi = blend_toward_neutral(p_yrfi_raw, h_starts, a_starts)
         p_nrfi = 1 - p_yrfi
 
+        # contribs/logit explain the RAW model's reasoning (the surrogate was
+        # fit against the raw model output, not the post-hoc blend) -- the
+        # confidence blend is a separate correction layered on top, not part
+        # of "why this edge".
         contribs = (group_contributions(feat.iloc[0], feat_cols, surrogate)
                     if surrogate else {})
 
@@ -225,7 +236,7 @@ def main() -> int:
 
         rows.append({
             **contribs,
-            "base_model_logit": round(_logit(p_yrfi), 4),
+            "base_model_logit": round(_logit(p_yrfi_raw), 4),
             "game_pk": int(grow["game_pk"]),
             "game_date": TODAY,
             "home_team": h_ab, "away_team": a_ab,
@@ -245,6 +256,8 @@ def main() -> int:
             "model_nrfi_prob": round(p_nrfi, 4),
             "yrfi_model_odds": american_odds(p_yrfi),
             "nrfi_model_odds": american_odds(p_nrfi),
+            "model_yrfi_prob_raw": round(p_yrfi_raw, 4),
+            "confidence_blend_weight": round(confidence_weight, 4),
             "home_pitcher_seas_nrfi_pct": hp.get("seas_nrfi_pct"),
             "home_pitcher_l5_nrfi_pct": hp.get("l5_nrfi_pct"),
             "home_pitcher_career_nrfi_pct": hp.get("nrfi_pct"),

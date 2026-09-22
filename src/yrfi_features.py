@@ -73,6 +73,39 @@ ERA_LEAGUE_PRIOR = 4.85    # start-weighted league mean across all pitchers
                            # cohort's mean (5.05) and median (4.82) closely.
 SHRINK_K_ERA = 12.0
 
+# ── post-hoc confidence blend, applied to the model's OUTPUT probability ────
+# Added 2026-09-21. The input-side shrinkage above (career/seas/l5_nrfi_pct,
+# first_inn_era) was confirmed -- via a diagnostic k=100 retrain that pushed
+# a thin-sample rate value to be indistinguishable from the league prior --
+# to have essentially no effect on the ATH@CLE motivating case (824383,
+# 2026-09-18: 85.3% -> 84.2% -> 84.4% across three attempts). A RandomForest
+# re-derives split-based separation from whatever residual/correlated signal
+# remains and is not linearly responsive to how far a continuous input is
+# shrunk toward a prior, the way a linear model would be. This blends the
+# FINAL probability toward a neutral 0.5 directly, weighted by confidence =
+# min(home_starts, away_starts) / (min_starts + CONFIDENCE_BLEND_K) -- a
+# guaranteed, direct fix instead of hoping the model learns it indirectly.
+# k=3 chosen by checking both ends against real cases: a total debut (0
+# starts) always fully neutralizes regardless of k (min=0 forces weight=0);
+# an established pair (e.g. 31 vs 84 career starts) drifts only ~0.6pp at
+# k=3 (0.4061 -> 0.4144) vs. a much larger, unwanted ~2.3pp drift at k=10.
+CONFIDENCE_BLEND_K = 3.0
+NEUTRAL_P = 0.5
+
+
+def blend_toward_neutral(p: float, home_starts: float | None, away_starts: float | None,
+                         k: float = CONFIDENCE_BLEND_K) -> float:
+    """Pull a predicted probability toward 0.5 based on how little track
+    record backs it. Confidence weight = min_starts / (min_starts + k): a
+    debut pitcher (0 starts) drives weight to exactly 0 (full neutral,
+    regardless of the other side), two well-established starters leave the
+    prediction essentially untouched."""
+    h = 0.0 if home_starts is None or pd.isna(home_starts) else float(home_starts)
+    a = 0.0 if away_starts is None or pd.isna(away_starts) else float(away_starts)
+    m = min(h, a)
+    weight = m / (m + k)
+    return NEUTRAL_P + (float(p) - NEUTRAL_P) * weight
+
 
 def _shrink(rate: float | None, n: float | None, prior: float, k: float) -> float:
     """Credibility-weighted blend of an observed rate toward a prior. Always
