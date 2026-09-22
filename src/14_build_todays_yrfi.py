@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -34,11 +35,29 @@ from yrfi_features import build_game_features, feature_columns, FEATURE_GROUPS  
 from park_factors import get_park  # noqa: E402
 
 TODAY = date.today().isoformat()
+_ET = ZoneInfo("America/New_York")
 
 
 def _logit(p: float) -> float:
     p = min(max(float(p), 1e-6), 1 - 1e-6)
     return float(np.log(p / (1 - p)))
+
+
+def _game_time_and_status(game_datetime_utc, game_status: str | None) -> tuple[str, str, bool]:
+    """(local start time e.g. '7:10 PM ET', status, has-it-started) from the
+    schedule's UTC gameDate + abstractGameState. Falls back to a UTC-vs-now
+    comparison if status is missing (e.g. stale cache from before this field
+    was added) rather than assuming not-yet-started."""
+    status = game_status or "Preview"
+    if not game_datetime_utc:
+        return "TBD", status, False
+    try:
+        dt_utc = datetime.fromisoformat(str(game_datetime_utc).replace("Z", "+00:00"))
+        local = dt_utc.astimezone(_ET).strftime("%-I:%M %p ET")
+    except (ValueError, TypeError):
+        return "TBD", status, status not in ("Preview",)
+    started = status not in ("Preview",) or datetime.now(timezone.utc) >= dt_utc
+    return local, status, started
 
 
 def group_contributions(feat_row: pd.Series, feat_cols: list, surrogate: dict) -> dict:
@@ -223,6 +242,9 @@ def main() -> int:
         hp = prof_map.get(int(h_pid), {}) if pd.notna(h_pid) else {}
         ap = prof_map.get(int(a_pid), {}) if pd.notna(a_pid) else {}
 
+        start_local, status, started = _game_time_and_status(
+            grow.get("game_datetime_utc"), grow.get("game_status"))
+
         rows.append({
             **contribs,
             "base_model_logit": round(_logit(p_yrfi), 4),
@@ -235,6 +257,9 @@ def main() -> int:
             "away_team_record": records.get(int(grow["away_team_id"])),
             "game_time": pd.to_datetime(grow.get("game_date")).strftime("%Y-%m-%d")
             if pd.notna(grow.get("game_date")) else TODAY,
+            "game_start_local": start_local,
+            "game_status": status,
+            "game_started": started,
             "home_pitcher_id": int(h_pid) if pd.notna(h_pid) else np.nan,
             "home_pitcher_name": grow.get("home_probable_pitcher_name"),
             "home_pitcher_hand": grow.get("home_probable_pitcher_hand"),

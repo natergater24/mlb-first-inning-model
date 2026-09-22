@@ -497,6 +497,19 @@ def _fmt_checked(iso) -> str:
         return str(iso)
 
 
+def _odds_blank_reason(r) -> str | None:
+    """Why this game shows no book odds, when it shows none -- distinguishes
+    'game already started (books pull the first-inning market)' from 'odds
+    just haven't been fetched/found yet' so a blank line doesn't read as a
+    data bug."""
+    has_odds = pd.notna(r.get("yrfi_market_avg_implied")) or pd.notna(r.get("nrfi_market_avg_implied"))
+    if has_odds:
+        return None
+    if bool(r.get("game_started")):
+        return "⏱ Odds unavailable — game has started (books pull the 1st-inning market once play begins)"
+    return "⏱ Odds not yet available for this game"
+
+
 def _better_value_side(r) -> str:
     """Which of NRFI / YRFI is the better value pick."""
     ne, ye = r.get("nrfi_edge_pct"), r.get("yrfi_edge_pct")
@@ -582,10 +595,13 @@ def game_card(r):
             dome = bool(r.get("is_dome"))
             wx = "🏠 Dome" if dome else (
                 f"{fmt_stat(r.get('temp_f'),0)}°F · {fmt_stat(r.get('wind_speed'),0)} mph")
+            start = r.get("game_start_local") or "TBD"
+            time_note = (f"<span style='color:#c0392b;font-weight:600'>🔴 {start} (in progress)</span>"
+                         if bool(r.get("game_started")) else f"🕐 {start}")
             st.markdown(
                 team_line("away") + team_line("home") +
                 f"<div style='color:#888;font-size:12px;margin-top:2px'>"
-                f"@ {r.get('park_name','')} · {wx} · <span>{conf_note}</span></div>",
+                f"{time_note} · @ {r.get('park_name','')} · {wx} · <span>{conf_note}</span></div>",
                 unsafe_allow_html=True)
 
         # ── model YRFI / NRFI odds, better value bolded ──────────────────
@@ -613,14 +629,18 @@ def game_card(r):
 
         # ── book lines + checked timestamp ──────────────────────────────
         with right:
+            blank_reason = _odds_blank_reason(r)
+            footer = (f"<div style='font-size:10px;color:#c0392b;margin-top:2px'>{blank_reason}</div>"
+                      if blank_reason else
+                      f"<div style='font-size:10px;color:#999;margin-top:2px'>"
+                      f"checked {_fmt_checked(r.get('odds_checked_at'))} · ⚡ works on Caesars & BetMGM · "
+                      f"DraftKings & FanDuel open their MLB lobby (no working instant link)</div>")
             st.markdown(
                 "<div style='font-size:11px;color:#888;letter-spacing:.5px'>"
                 "BOOK LINES (AMERICAN) <span style='font-weight:400'>· ⚡ adds bet to slip · ↗ opens book"
                 "</span></div>"
                 + _book_line_table(r)
-                + f"<div style='font-size:10px;color:#999;margin-top:2px'>"
-                f"checked {_fmt_checked(r.get('odds_checked_at'))} · ⚡ works on Caesars & BetMGM · "
-                f"DraftKings & FanDuel open their MLB lobby (no working instant link)</div>",
+                + footer,
                 unsafe_allow_html=True)
 
         # ── recommendation strip ────────────────────────────────────────
@@ -733,7 +753,9 @@ def page_detail(pk: int, pred: pd.DataFrame):
     dome = bool(r.get("is_dome"))
     wx = "🏠 Dome" if dome else f"{fmt_stat(r.get('temp_f'),0)}°F · wind {fmt_stat(r.get('wind_speed'),0)} mph"
     st.header(f"{r['away_team']} @ {r['home_team']}")
-    st.caption(f"{TODAY}  ·  {r.get('park_name','')}  ·  {wx}")
+    start = r.get("game_start_local") or "TBD"
+    time_str = f"🔴 {start} (in progress)" if bool(r.get("game_started")) else f"🕐 {start}"
+    st.caption(f"{TODAY}  ·  {time_str}  ·  {r.get('park_name','')}  ·  {wx}")
 
     section_prediction(r)
     section_track_bet(r)
@@ -961,6 +983,10 @@ def section_prediction(r):
         return s
 
     st.dataframe(tbl.style.apply(hl, axis=1), hide_index=True, use_container_width=True)
+
+    blank_reason = _odds_blank_reason(r)
+    if blank_reason:
+        st.caption(blank_reason)
 
     rec = str(r.get("recommended_bet", "NO EDGE"))
     bet_side = rec.split()[0] if rec.split()[0] in ("NRFI", "YRFI") else _better_value_side(r)

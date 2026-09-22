@@ -552,9 +552,11 @@ def fetch_probable_pitchers(today: str = None) -> pd.DataFrame:
     rows = []
     for date_obj in data.get("dates", []):
         for game in date_obj.get("games", []):
-            game_pk   = game.get("gamePk")
-            game_date = game.get("gameDate", "")[:10]
-            teams     = game.get("teams", {})
+            game_pk       = game.get("gamePk")
+            game_datetime = game.get("gameDate", "")   # full ISO UTC datetime
+            game_date     = game_datetime[:10]
+            game_status   = game.get("status", {}).get("abstractGameState", "Preview")
+            teams         = game.get("teams", {})
 
             def _pitcher_info(side_data):
                 pp = side_data.get("probablePitcher", {})
@@ -575,6 +577,8 @@ def fetch_probable_pitchers(today: str = None) -> pd.DataFrame:
             rows.append({
                 "game_pk":                   game_pk,
                 "game_date":                 game_date,
+                "game_datetime_utc":         game_datetime,
+                "game_status":               game_status,
                 "home_team_id":              home.get("team", {}).get("id"),
                 "home_team_name":            home.get("team", {}).get("name"),
                 "away_team_id":              away.get("team", {}).get("id"),
