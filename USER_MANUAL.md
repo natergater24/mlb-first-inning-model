@@ -154,10 +154,15 @@ Single page, three views.
   "Reset to model" button. Every card/edge/EV/recommendation recomputes live.
 - Header with colour-coded "updated N min ago" + "Refresh slate" button.
 - Metric row, filters (All / NRFI Edge / YRFI Edge / No Edge), sort, confirmed-only toggle.
-- One card per game: teams + records + probable pitchers + NRFI% (left);
-  both model odds with the better-value side marked ◄ (middle); 2×4 book-lines
-  table DK/FD/MGM/CZR with ⚡/↗ links (right); recommended-bet badge + edge% +
-  EV/$100 + "View details →"; a **"Why this edge"** 1-2 sentence caption (added
+- One card per game: teams + records + probable pitchers + NRFI% (left, now
+  with the local **start time** — 🕐 pre-game, 🔴 "in progress" once the
+  game's status/time says it's started, added 2026-09-21); both model odds
+  with the better-value side marked ◄ (middle); 2×4 book-lines table
+  DK/FD/MGM/CZR with ⚡/↗ links (right) — when a game shows no book odds at
+  all, a caption now says why: **"odds unavailable — game has started"** vs.
+  **"odds not yet available"** (added 2026-09-21; previously both cases were
+  an unexplained blank "—"); recommended-bet badge + edge% + EV/$100 +
+  "View details →"; a **"Why this edge"** 1-2 sentence caption (added
   2026-09-18, same logic as the detail view below) naming what's driving the
   lean, plus a **"⚠️ Low-confidence prediction"** caption when that logic
   fires (see detail view below); then a collapsed **➕ Log a Bet** at bottom.
@@ -285,6 +290,16 @@ only ever shows on the hosted deployment).
 - `umpire_zone_adj` is a placeholder (0.0) for almost all games.
 - Isotonic calibration + limited feature spread → today's probabilities cluster
   onto a handful of distinct values.
+- **Pitcher small-sample correction (2026-09-21):** a debut or thin-sample
+  starter (e.g. 4 career starts) used to be able to push `model_yrfi_prob` to
+  an extreme (85%/-580 on a real case) even though every sportsbook had the
+  game near a coin flip. `src/yrfi_features.py` now (1) shrinks the NRFI-rate
+  and `first_inn_era` pitcher features toward a league prior by sample size,
+  and (2) blends the model's final probability toward 0.5 by
+  `min(home_starts, away_starts)` — a total debut forces an exact coin flip.
+  `model_yrfi_prob_raw` (pre-blend) and `confidence_blend_weight` are kept in
+  `todays_yrfi_predictions.parquet` alongside the blended `model_yrfi_prob`
+  for anyone who wants to see the raw number.
 
 ---
 

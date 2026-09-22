@@ -107,4 +107,16 @@ stuff (velo, K%, BB%, hard-hit% allowed, first-pitch-strike%), last-5-starts tre
 top-5 batter BvP/OBP/HR-per-PA, park factors, weather, month, umpire tendency.
 YRFI is close to a coin flip (~50.5% base rate); test AUC ~0.55, well calibrated (ECE ~0.04).
 
+**Pitcher small-sample correction (2026-09-21):** diagnosed against a real case (ATH@CLE,
+2026-09-18) where the model priced YRFI at 85%/-580 off a pitcher's 25% NRFI rate over just 4
+starts, while every sportsbook had the game near a coin flip. Two layers, in `src/yrfi_features.py`:
+(1) the three NRFI-rate features (career/season/L5) and `first_inn_era` are Bayesian-shrunk toward
+a league prior, weighted by how many starts back them (`_shrink()`); (2) confirmed via a live
+spot-check that shrinking the *input* alone barely moved this RandomForest's output (85%→84%,
+since a tree ensemble re-derives separation from whatever correlated signal remains, unlike a
+linear model), so the model's *output* probability is also blended toward a neutral 0.5, weighted
+by `min(home_starts, away_starts)` (`blend_toward_neutral()`) — a debut pitcher (0 starts) forces
+an exact coin flip; an established pair drifts under 1pp. `model_yrfi_prob_raw` and
+`confidence_blend_weight` are kept alongside the blended `model_yrfi_prob` for transparency.
+
 See USER_MANUAL.md for full operating instructions and claude-context.txt for the design briefing.
