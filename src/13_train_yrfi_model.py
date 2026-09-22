@@ -40,7 +40,7 @@ MODELS.mkdir(parents=True, exist_ok=True)
 
 sys.path.insert(0, str(ROOT / "src"))
 from yrfi_features import (build_game_features, feature_columns, load_support,  # noqa: E402
-                           FEATURE_GROUPS, GROUP_LABELS)
+                           FEATURE_GROUPS, GROUP_LABELS, blend_toward_neutral)
 
 TRAIN_YEARS = range(2015, 2023)   # 2015-2022
 VAL_YEAR = 2023
@@ -107,6 +107,10 @@ def main() -> int:
 
     def evalset(name, frame, ytrue):
         p = cal.predict_proba(X(frame))[:, 1]
+        h_starts = np.expm1(frame["home_pitcher_starts_log"].values)
+        a_starts = np.expm1(frame["away_pitcher_starts_log"].values)
+        p = np.array([blend_toward_neutral(pi, h, a)
+                      for pi, h, a in zip(p, h_starts, a_starts)])
         row = {
             "set": name, "n": int(len(ytrue)),
             "auc": round(roc_auc_score(ytrue, p), 4),
