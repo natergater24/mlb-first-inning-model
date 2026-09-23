@@ -1720,3 +1720,19 @@ still showed the old /us/nj/ domain (with matching odds_checked_at timestamp fro
 until its own "🔄 Refresh slate" button was clicked, which re-runs 04_fetch_odds.py live in that
 session. After clicking it, odds_checked_at updated and the link corrected to /us/nc/. Documented
 in claude-context.txt as a note for verifying any future odds/deeplink fix on Cloud.
+
+=== 2026-09-23 — PLANNING: PASTE-A-BETSLIP-URL AUTO-LOGGING (next project, noted only) ===
+TASK: user asked to note down a future project before testing the local LaunchAgent fix: paste
+the betslip URL from a bet actually placed and have the app parse it + log the bet automatically
+(side, book, odds, stake) instead of using the manual "Log a Bet" form.
+NO CODE CHANGED — planning/notes only, written into claude-context.txt's new FUTURE PROJECT
+section (right after the per-pitch batted-ball model section) plus a pointer added to the
+OUTSTANDING/NEXT STEPS list. Key feasibility split identified before any build starts: (a)
+re-matching one of the app's OWN already-generated Caesars/BetMGM deeplinks against today's
+fetched odds data (straightforward — game/side/book/odds-at-fetch-time all recoverable, stake
+still needs manual entry) vs. (b) parsing a sportsbook's own post-placement bet-confirmation URL
+(much harder — most books don't expose a shareable URL for a placed bet at all; any that do would
+need per-book reverse-engineering, same ToS/fragility risk already flagged for DK's odds
+scraping). Recommended building (a) first if picked up.
+FILES CHANGED: claude-context.txt, claude-prompts.txt.
+DEPLOY: none.

@@ -616,6 +616,38 @@ placeholder callout in the home-team Top-of-Order section. MORE DETAIL TO COME.
 Keep it strictly separated from the trained YRFI RandomForest + logistic surrogate — the
 "YOUR WEIGHTING" sliders and every probability/edge/EV in the app come only from that model.
 
+=== FUTURE PROJECT (noted 2026-09-23, not started) — PASTE-A-BETSLIP-URL AUTO-LOGGING ===
+ASK: instead of manually filling out "Log a Bet" (side/book/odds/units), let the user paste the
+betslip URL they get after placing a real bet and have the app parse it, auto-fill the bet
+details, and call bt.add_bet() directly — no manual form entry.
+
+WHY THIS IS HARDER THAN IT SOUNDS (read before building): the app already generates OUTBOUND
+betslip deeplinks (yrfi_link_{DK,FD,MGM,CZR} / nrfi_link_{...}, built in
+fetch_sgo_first_inning(), src/04_fetch_odds.py — see that section above) so it can offer the ⚡
+"add to betslip" buttons. This feature is the REVERSE direction: parsing an INBOUND URL the user
+pastes back in. Two very different cases, with very different feasibility:
+  (a) The user pastes back the SAME pre-bet deeplink we generated (Caesars/BetMGM — the only two
+      with real ⚡ deeplinks today; DK has none, FD's is a rejected template id, see the ⚡
+      coverage note above). This is the easy case: match the pasted URL/selectionId against
+      today's already-fetched yrfi_odds_{date}.parquet to instantly recover game_pk, side
+      (YRFI/NRFI), book, and the odds AT THE TIME WE FETCHED THEM. Still can't know: the odds
+      actually secured (line could have moved between fetch and bet placement) or the stake/units
+      (sportsbooks never encode wager size in a pre-bet deeplink) — both would still need a
+      quick manual confirm, just pre-filled instead of blank.
+  (b) The user pastes a URL from the SPORTSBOOK'S OWN post-placement "my bet" / bet history page.
+      Much harder: most books don't expose a shareable URL for an individual placed bet at all
+      (many bet-confirmation views are behind login, in-app only, or session-scoped); any book
+      that does would need its own URL scheme reverse-engineered, same class of fragility/ToS
+      risk already flagged for DK's ?outcomes= scheme (see 04_fetch_odds.py section above,
+      "DK-instant-link options (not pursued)") — confirm per-book feasibility before committing
+      to this path for any specific sportsbook.
+RECOMMENDED SEQUENCING IF PICKED UP: build case (a) first — it's a straightforward lookup against
+data already being fetched daily, touches bet_tracker.py's existing add_bet() and app.py's
+existing _log_bet_form_compact()/section_track_bet() forms (pre-fill instead of replace, so a
+mismatch or expired URL still falls back to the current manual flow rather than blocking
+logging entirely). Case (b) is a separate, book-by-book research question — don't assume it's
+buildable for any book until checked.
+
 === "WHY THIS EDGE" BLURB (requested 2026-09-17, BUILT 2026-09-18) ===
 Detail view Section 1 now shows a 1-2 sentence, plain-English explanation of what's driving each
 game's NRFI/YRFI lean, right under the probability bar (before the book-lines table). Two-tier
@@ -818,6 +850,12 @@ options rather than built.
   - Optional: switch calibration to sigmoid if isotonic plateaus stay too coarse.
   - FUTURE (own section above): per-pitch batted-ball model, shown alongside — not inside — the
     current model.
+  - FUTURE (own section above, noted 2026-09-23): paste-a-betslip-URL auto-logging — user pastes
+    the betslip URL from a bet they actually placed, app parses it and calls bt.add_bet()
+    directly instead of the manual "Log a Bet" form. Build case (a) — matching one of our OWN
+    generated Caesars/BetMGM deeplinks against today's odds data — before attempting case (b) —
+    parsing a sportsbook's own post-placement bet-confirmation URL, which needs a per-book
+    feasibility check first.
 
   [DONE 2026-09-09, this session] pivot to YRFI/NRFI · weather 30-stadium fix · game-card redesign
   · direct sportsbook links · SGO first-inning odds (DK/FD/MGM/CZR + fairOdds) · CZR/MGM instant
