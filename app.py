@@ -73,6 +73,9 @@ BOOK_META = {  # short -> (label, color)
     "CZR": ("Caesars", "#1b3c5d"),
     "ESPN": ("ESPN Bet", "#d6001c"),
     "BOV": ("Bovada", "#6b3fa0"),
+    "PB": ("PointsBet", "#ff6b35"),
+    "UNI": ("Unibet", "#00a99d"),
+    "WH": ("William Hill", "#8a8d93"),
 }
 BOOK_BET_URL = {
     "DK": "https://sportsbook.draftkings.com/leagues/baseball/mlb",
@@ -81,6 +84,9 @@ BOOK_BET_URL = {
     "CZR": "https://sportsbook.caesars.com/us/nj/sport/baseball",
     "ESPN": "https://espnbet.com/sport/baseball/organization/mlb",
     "BOV": "https://www.bovada.lv/sports/baseball/mlb",
+    "PB": "https://pointsbet.com/sports/baseball/mlb",
+    "UNI": "https://unibet.com/sports/baseball/mlb",
+    "WH": "https://www.williamhill.com/us/sports/baseball/mlb",
 }
 
 

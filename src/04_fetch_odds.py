@@ -101,12 +101,22 @@ MARKETS_FIRST_INNING = [
 # bet365 or Fanatics Sportsbook for MLB — they cannot be added without a
 # dedicated third data source.
 FI_BOOK_KEYS = {"draftkings": "DK", "fanduel": "FD", "betmgm": "MGM", "caesars": "CZR",
-                "espnbet": "ESPN", "bovada": "BOV"}
+                "espnbet": "ESPN", "bovada": "BOV", "pointsbet": "PB",
+                "unibet": "UNI", "williamhill": "WH"}
+# The full set above matches SportsGameOdds' actual MLB bookmaker list --
+# confirmed live via /v2/events/ (oddsAvailable=true), not assumed: betmgm,
+# bovada, caesars, draftkings, espnbet, fanduel, pointsbet, unibet,
+# williamhill is the complete list, 9 books, no more exist to add from SGO.
 SGO_FI_OVER_KEY = "points-all-1i-ou-over"    # YRFI
 SGO_FI_UNDER_KEY = "points-all-1i-ou-under"  # NRFI
 
 # Sportsbooks to include (North American + major)
 BOOKMAKERS = "draftkings,fanduel,betmgm,caesars,pointsbet,williamhill_us,betonlineag,bovada,espnbet"
+# NOTE: no Unibet key exists on The Odds API for any US region (checked their
+# public bookmaker docs directly) -- Unibet only comes through SGO (primary).
+# williamhill_us on the Odds API links to the same underlying Caesars platform
+# per their own docs, so the fallback path may return identical data for
+# those two; SGO returns them as genuinely distinct bookmaker keys.
 
 # ── SportsGameOdds (SGO) constants ────────────────────────────────────────────
 SGO_BASE = "https://api.sportsgameodds.com/v2"

@@ -129,18 +129,20 @@ Neither restarts Streamlit; use `launch.sh` or Option B for that.
 - **Fallback: The Odds API** (`ODDS_API_KEY`) — 500 requests/month free; only
   FanDuel + BetMGM expose the first-inning total here. Don't run odds more than
   once/day; don't `--force-refresh` repeatedly when quota is low.
-- **ESPN Bet & Bovada (added 2026-09-24):** wired into the same pipeline
-  (`FI_BOOK_KEYS` in `src/04_fetch_odds.py`) and shown as two more columns in
-  the book-lines table — but as of this writing neither actually offers the
-  0.5-run first-inning market on SGO (both are otherwise-valid SGO bookmakers,
-  just not for this specific prop; confirmed via a live API check, not
-  assumed), so their columns currently render blank ("—"), same as any other
-  book with no data for a game. The plumbing is real and will populate
-  automatically the day either book lists this market — no code change
-  needed then. Hard Rock Bet was investigated and deliberately left out:
-  absent from SGO entirely; present on The Odds API only under a separate,
-  state-scoped `us2` region that would double that fallback's already-scarce
-  quota cost, and it's unconfirmed whether Hard Rock Bet even operates in NC.
+- **All 9 SGO bookmakers wired in (added 2026-09-24):** `FI_BOOK_KEYS` in
+  `src/04_fetch_odds.py` now covers SportsGameOdds' complete MLB bookmaker
+  set — confirmed live via `/v2/events/` (`oddsAvailable=true`), not assumed:
+  DraftKings, FanDuel, BetMGM, Caesars, ESPN Bet, Bovada, PointsBet, Unibet,
+  William Hill. That's all of them; there's nothing left on SGO to add. As of
+  this writing only DK/FD/MGM/CZR actually offer the 0.5-run first-inning
+  market — the other 5 are real SGO bookmakers generally, just not (yet) for
+  this specific prop, so their columns render blank ("—") like any book with
+  no data for a game. The plumbing is real and will populate automatically
+  the day any of them lists this market — no code change needed then.
+  Hard Rock Bet was investigated and deliberately left out: absent from SGO
+  entirely; present on The Odds API only under a separate, state-scoped
+  `us2` region that would double that fallback's already-scarce quota cost,
+  and it's unconfirmed whether Hard Rock Bet even operates in NC.
 - **Instant "add to betslip" (⚡)** works for **Caesars & BetMGM** only.
   DraftKings has no deeplink; FanDuel's is a template id that FD rejects — both
   fall back to the book's MLB lobby (↗). SGO always returns both Caesars and

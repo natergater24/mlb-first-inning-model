@@ -1822,3 +1822,28 @@ fallback already handles it. The plumbing is real and will populate automaticall
 book lists this market on SGO.
 FILES CHANGED: src/04_fetch_odds.py, bet_tracker.py, app.py, USER_MANUAL.md, claude-prompts.txt.
 DEPLOY: committed and pushed same session.
+
+=== 2026-09-24 (Part 3) — REMAINING 3 SGO BOOKMAKERS ADDED (PointsBet, Unibet, William Hill) ===
+TASK: user asked to add "all possible sportsbooks from the primary feed" -- i.e. the rest of SGO's
+confirmed 9-bookmaker MLB set (Part 2 above had already found and added ESPN Bet + Bovada; this
+was PointsBet, Unibet, William Hill, the last 3).
+FI_BOOK_KEYS extended {"pointsbet":"PB","unibet":"UNI","williamhill":"WH"} -- same fully-generic
+pipeline as before, no other code changes needed in src/14 or app.py's _book_line_table.
+CHECKED BEFORE ASSUMING: The Odds API's BOOKMAKERS filter string already had pointsbet +
+williamhill_us (pre-existing from the old first-at-bat app); tried adding unibet_us too but
+checked their public bookmaker docs first and confirmed Unibet has NO US-region key on The Odds
+API at all (UK/EU/CA/SE/FI only) -- did not add an invalid filter value. Also noted per the same
+docs: williamhill_us on The Odds API links to the same underlying Caesars platform, so that
+fallback path may return duplicate CZR/WH data -- SGO returns them as genuinely distinct
+bookmaker keys, which is what matters since SGO is primary.
+Added BOOK_META/BOOK_BET_URL (app.py) and BOOKS/BOOK_CODE_TO_NAME (bet_tracker.py) entries for
+all 3 -- PointsBet was already in bt.BOOKS from the old app but had never gotten a short-code
+mapping since no odds source had ever supplied PointsBet data before today.
+VERIFIED live: refetched odds, same result as Part 2 -- none of the 3 new books currently list
+the 0.5-run first-inning market on SGO either (still only CZR/DK/FD/MGM have real data). Confirmed
+via the raw parquet directly, not assumed. Rebuilt predictions, restarted Streamlit, confirmed
+in-browser: book-lines table now shows all 9 columns with 9 distinct colors, no layout breakage,
+real odds for the original 4 and clean blank "--" cells for the other 5. 30/30 tests still pass
+(no new pure logic introduced -- pure constant/schema expansion of an already-generic pipeline).
+FILES CHANGED: src/04_fetch_odds.py, bet_tracker.py, app.py, USER_MANUAL.md, claude-prompts.txt.
+DEPLOY: committed and pushed same session.
