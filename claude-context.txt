@@ -815,6 +815,15 @@ options rather than built.
     Recommended sequencing if picked up: (2) first as a quick no-retrain improvement, then (3)+(4)
     together at the next full retrain (touching the same feature-engineering pass anyway).
   - Consider point-in-time pitcher NRFI aggregates to remove the look-ahead bias in training.
+    SAME ISSUE CONFIRMED for batter recent-form 2026-09-24: tried shrinking L7/L30 OBP toward
+    league-average by sample size (mirroring the pitcher fix), reverted same day -- top5_batter_
+    stats.parquet is a single frozen snapshot (rolling_asof = one date) reused for every historical
+    training row, so the shrink never sees real early-season variation during training and just
+    added noise (test AUC dropped below the regression budget, confirmed via retrain). A real fix
+    needs point-in-time reconstruction for BOTH pitcher and batter aggregates, not just pitcher --
+    same root cause, same blocker. Shipped instead: app.py's _thin_lineup_form_reason(), an
+    inference-only caution flag (today's real PA counts, not the frozen training snapshot) --
+    see README.md's Model Architecture section.
   - Optional: switch calibration to sigmoid if isotonic plateaus stay too coarse.
   - FUTURE (own section above): per-pitch batted-ball model, shown alongside — not inside — the
     current model.

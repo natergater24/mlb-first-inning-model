@@ -106,3 +106,16 @@ def test_blend_handles_nan_starts_as_zero():
     import math
     assert blend_toward_neutral(0.9, home_starts=float("nan"), away_starts=50) == 0.5
     assert blend_toward_neutral(0.9, home_starts=None, away_starts=50) == 0.5
+
+def test_top5_agg_exposes_recent_form_sample_size():
+    # Display-only PA counts (not a model feature) so the UI can flag a
+    # thin/early-season recent-form sample -- see _thin_lineup_form_reason
+    # in app.py.
+    from yrfi_features import _top5_agg
+    stats_by_team = {"NYY": [
+        {"l7_obp": 0.400, "l7_pa": 4, "l30_obp": 0.350, "l30_pa": 12},
+        {"l7_obp": 0.300, "l7_pa": 6, "l30_obp": 0.320, "l30_pa": 18},
+    ]}
+    out = _top5_agg("NYY", stats_by_team, "home")
+    assert out["home_top5_avg_l7_pa"] == 5.0
+    assert out["home_top5_avg_l30_pa"] == 15.0

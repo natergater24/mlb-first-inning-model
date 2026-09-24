@@ -119,4 +119,23 @@ by `min(home_starts, away_starts)` (`blend_toward_neutral()`) — a debut pitche
 an exact coin flip; an established pair drifts under 1pp. `model_yrfi_prob_raw` and
 `confidence_blend_weight` are kept alongside the blended `model_yrfi_prob` for transparency.
 
+**Lineup recent-form small samples (2026-09-24, display-only — see caveat):** the same
+overconfidence problem exists on the batter side — early in a season, "last 30 days" (L7/L30 OBP)
+might be 12 real plate appearances, fed to the model with the same weight as a genuine 100+ PA
+window later in the year. A training-time fix (shrinking L7/L30 toward league-average OBP, mirroring
+the pitcher fix) was tried and **reverted the same day**: `top5_batter_stats.parquet` is a single
+frozen snapshot reused for *every* historical training row regardless of that game's real date, so
+a PA-based shrink never sees real early-season variation during training — it just adds noise, and
+measurably dropped test AUC below the regression budget (confirmed via retrain). Fixing this
+properly needs point-in-time L7/L30 reconstruction (already on the outstanding list below).
+Shipped instead: `app.py`'s `_thin_lineup_form_reason()` — an inference-only caution flag (same
+UI pattern as the pitcher low-confidence warning) using **today's real, non-frozen** L7/L30 PA
+counts, which do vary meaningfully day to day. Doesn't change the model's probability, just warns
+when the lineup-recent-form signal driving a lean is backed by too few current-season PAs.
+
+**Notable batter-vs-pitcher matchups (2026-09-24):** the landing page now surfaces the day's most
+significant individual BvP matchups (a projected top-5 hitter with >=15 career PA against today's
+actual starter, hitting well above/below league norms specifically against him) — pure display,
+computed in `matchup_highlights.py` from data the app already loads, ranked by PA.
+
 See USER_MANUAL.md for full operating instructions and claude-context.txt for the design briefing.

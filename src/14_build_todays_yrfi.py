@@ -16,6 +16,7 @@ recommended_bet is derived from the model alone (>60% threshold).
 """
 from __future__ import annotations
 
+import os
 import sys
 import time
 from datetime import date, datetime, timezone
@@ -28,6 +29,19 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 PROC = ROOT / "data" / "processed"
 ODDS = ROOT / "data" / "odds"
+
+
+def _atomic_to_parquet(df: pd.DataFrame, path: Path) -> None:
+    """Write then os.replace() into place, so a reader (the live Streamlit
+    app, which re-reads this file on every page load) never sees a
+    half-written file. Diagnosed 2026-09-24: a scheduled LaunchAgent run
+    landed mid-page-load and briefly served a truncated read missing
+    columns entirely -- pandas' plain to_parquet() writes straight to the
+    target path with no such guarantee. os.replace() is atomic on the same
+    filesystem (this temp file is written right next to the target)."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    df.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
 MODELS = ROOT / "data" / "models"
 
 sys.path.insert(0, str(ROOT / "src"))
@@ -293,6 +307,10 @@ def main() -> int:
             "home_top5_avg_obp_vs_pitcher": round(home_obp_vp, 3) if pd.notna(home_obp_vp) else np.nan,
             "away_top5_avg_bvp_pa": round(away_bvp_pa, 1) if pd.notna(away_bvp_pa) else np.nan,
             "home_top5_avg_bvp_pa": round(home_bvp_pa, 1) if pd.notna(home_bvp_pa) else np.nan,
+            "away_top5_avg_l7_pa": feat["away_top5_avg_l7_pa"].iloc[0],
+            "away_top5_avg_l30_pa": feat["away_top5_avg_l30_pa"].iloc[0],
+            "home_top5_avg_l7_pa": feat["home_top5_avg_l7_pa"].iloc[0],
+            "home_top5_avg_l30_pa": feat["home_top5_avg_l30_pa"].iloc[0],
             "temp_f": feat["temp_f"].iloc[0],
             "wind_speed": feat["wind_speed"].iloc[0],
             "wind_out_component": feat["wind_out_component"].iloc[0],
@@ -368,7 +386,7 @@ def main() -> int:
     df["recommended_bet_ev"] = df.apply(ev, axis=1)
 
     df = df.sort_values("model_nrfi_prob", ascending=False).reset_index(drop=True)
-    df.to_parquet(PROC / "todays_yrfi_predictions.parquet", index=False)
+    _atomic_to_parquet(df, PROC / "todays_yrfi_predictions.parquet")
 
     # ── summary ──────────────────────────────────────────────────────────
     print("=" * 60)

@@ -28,6 +28,7 @@ import pandas as pd
 import streamlit as st
 
 import bet_tracker as bt
+from matchup_highlights import compute_notable_bvp_matchups
 
 ROOT = Path(__file__).resolve().parent
 PROC = ROOT / "data" / "processed"
@@ -441,6 +442,8 @@ def page_landing(pred: pd.DataFrame):
     m3.metric("Strong YRFI edges", strong_yrfi)
     m4.metric("Confirmed starters", f"{pred['_confirmed'].sum()}/{len(pred)}")
 
+    _render_notable_bvp_matchups(pred)
+
     st.divider()
 
     # filters
@@ -478,6 +481,20 @@ def page_landing(pred: pd.DataFrame):
 
     for _, r in df.iterrows():
         game_card(r)
+
+
+def _render_notable_bvp_matchups(pred: pd.DataFrame):
+    matchups = compute_notable_bvp_matchups(pred, load_top5_teams(), load_bvp())
+    if not matchups:
+        return
+    lines = []
+    for m in matchups:
+        emoji = "🔥" if m["hot"] else "🧊"
+        lines.append(
+            f"{emoji} **{m['batter_name']}** ({m['team']}) is **{fmt_pct(m['obp']*100, 1)} OBP** "
+            f"vs **{m['pitcher_name']}** today — {m['pa']} career PA"
+            + (f", {m['hr']} HR" if m['hr'] else ""))
+    st.info("**Notable batter-vs-pitcher matchups today**  \n" + "  \n".join(lines))
 
 
 def logo_img(team_id, size=22) -> str:
@@ -680,7 +697,7 @@ def game_card(r):
         why = _why_this_edge(r)
         if why:
             st.caption(why)
-        low_conf = _low_confidence_reason(r)
+        low_conf = _low_confidence_reason(r) or _thin_lineup_form_reason(r)
         if low_conf:
             st.caption(low_conf)
 
@@ -706,7 +723,7 @@ def _log_bet_form_compact(r, key_prefix: str):
     side = c1.selectbox("Bet type", ["YRFI", "NRFI"], key=f"{key_prefix}_side")
     book = c2.selectbox("Book", bt.BOOKS, key=f"{key_prefix}_book")
     odds_str = c3.text_input("Odds (American)", placeholder="+140", key=f"{key_prefix}_odds")
-    stake_units = c4.number_input("Stake (units)", min_value=0.0, value=1.0, step=0.5,
+    stake_units = c4.number_input("Stake (units)", min_value=0.0, value=1.0, step=0.1,
                                   key=f"{key_prefix}_stake")
     c5.write("")
     log_clicked = c5.button("Log Bet", key=f"{key_prefix}_log", use_container_width=True)
@@ -925,6 +942,50 @@ def _low_confidence_reason(r) -> str | None:
             "is a thin sample: " + " and ".join(thin) + ". Treat this line with caution.")
 
 
+# ── low-confidence flag (thin lineup recent-form sample driving the model) ──
+# Added 2026-09-24, same pattern as the pitcher flag above. L7/L30 OBP is a
+# raw rate with no sample-size weighting -- early in a season "last 30 days"
+# might be 12 real PA, but the model treats it identically to a genuine
+# 100+ PA window later in the year. A model-level fix (shrinking the
+# feature during training) was tried and reverted the same day: this
+# project's top5_batter_stats.parquet is a single frozen snapshot reused
+# for every historical training row regardless of that game's real date, so
+# a PA-based shrink at training time never sees real early-season variation
+# -- it just adds noise, and measurably hurt test AUC. This flag is
+# inference-only display logic using TODAY's real (non-frozen) PA counts,
+# same role as the pitcher stopgap had before its own model-level fix.
+_CONF_MIN_L30_PA = 40   # plate appearances needed to trust the L30 recent-form average
+_CONF_MIN_L7_PA = 15    # plate appearances needed to trust the L7 recent-form average
+
+
+def _thin_lineup_form_reason(r) -> str | None:
+    """Returns a caution string when the dominant contrib group is a
+    lineup's recent form (L7/L30 OBP) and that side's actual current sample
+    is too thin to trust -- most commonly true early in a season, before a
+    team's hitters have played enough games for L7/L30 to mean what the
+    label implies. Returns None when the prediction looks well-supported."""
+    logit = r.get("base_model_logit")
+    if pd.isna(logit):
+        return None
+    contribs = {g: float(r.get(f"contrib_{g}") or 0.0) for g in WEIGHT_GROUPS}
+    top_group, top_val = max(contribs.items(), key=lambda kv: abs(kv[1]))
+    if top_group != "lineup_recent_form" or abs(top_val) < _WHY_EDGE_MIN_CONTRIB:
+        return None
+    thin = []
+    for side, team in (("away", r.get("away_team")), ("home", r.get("home_team"))):
+        l30 = r.get(f"{side}_top5_avg_l30_pa")
+        l7 = r.get(f"{side}_top5_avg_l7_pa")
+        if pd.notna(l30) and l30 < _CONF_MIN_L30_PA:
+            thin.append(f"{team} (~{l30:.0f} PA over the last 30 days)")
+        elif pd.notna(l7) and l7 < _CONF_MIN_L7_PA:
+            thin.append(f"{team} (~{l7:.0f} PA over the last 7 days)")
+    if not thin:
+        return None
+    return ("⚠️ Low-confidence prediction — the lineup recent-form signal driving this lean "
+            "is a thin, likely early-season sample: " + " and ".join(thin) +
+            ". Treat this line with caution.")
+
+
 def section_prediction(r):
     st.subheader("1 · Model Prediction Summary")
     nrfi = float(r["model_nrfi_prob"])
@@ -949,7 +1010,7 @@ def section_prediction(r):
     why = _why_this_edge(r)
     if why:
         st.caption(why)
-    low_conf = _low_confidence_reason(r)
+    low_conf = _low_confidence_reason(r) or _thin_lineup_form_reason(r)
     if low_conf:
         st.warning(low_conf)
     st.write("")
@@ -1613,7 +1674,7 @@ def _edit_bet_form(b: pd.Series, ctx: str = "log"):
     odds = c3.number_input("Odds", value=float(b["odds"]), step=5.0,
                            key=f"eb_odds_{k}")
     units = c4.number_input("Units", min_value=0.0, value=float(b["units"]),
-                            step=0.5, key=f"eb_units_{k}")
+                            step=0.1, key=f"eb_units_{k}")
     s1, s2 = st.columns(2)
     if s1.button("💾 Save", key=f"eb_save_{k}", use_container_width=True):
         try:
@@ -1650,7 +1711,7 @@ def section_track_bet(r):
     # key varies with side/book so the field re-prefills when either changes
     odds = c3.number_input("Odds (American)", value=prefill, step=5.0,
                            key=f"tb_odds_{pk}_{side}_{book}")
-    units = c4.number_input("Units staked", min_value=0.0, value=1.0, step=0.5,
+    units = c4.number_input("Units staked", min_value=0.0, value=1.0, step=0.1,
                             key=f"tb_units_{pk}")
     us = float(st.session_state.get("unit_size", bt.DEFAULT_UNIT_SIZE))
     st.caption(f"Stake is in **units** · 1 unit = \\${us:g} (set at the top) · "

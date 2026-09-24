@@ -215,6 +215,20 @@ def _top5_agg(team_abbr: str, stats_by_team: dict, prefix: str) -> dict:
     out[f"{prefix}_top5_avg_bvp_pa"] = m("_bvp_pa")
     out[f"{prefix}_top5_avg_l7_obp"] = m("l7_obp")
     out[f"{prefix}_top5_avg_l30_obp"] = m("l30_obp")
+    # Display-only (not in feature_columns()) -- how many plate appearances
+    # actually back the recent-form averages above, so the UI can flag a
+    # thin/early-season sample rather than presenting it with false
+    # confidence. See "incorporate into the summary of what is feeding the
+    # odds" -- app.py's _thin_lineup_form_reason(). Deliberately NOT fed to
+    # the model as a shrink (tried 2026-09-24, reverted): top5_batter_stats.
+    # parquet is a single frozen snapshot reused for every historical
+    # training row regardless of that game's actual date, so a PA-based
+    # shrink at training time adds noise without ever seeing real
+    # early-season variation -- it measurably hurt test AUC. This same PA
+    # count is fine to surface for TODAY's real, non-frozen inference,
+    # which is why it's exposed here for display only, not as a feature.
+    out[f"{prefix}_top5_avg_l7_pa"] = m("l7_pa")
+    out[f"{prefix}_top5_avg_l30_pa"] = m("l30_pa")
     out[f"{prefix}_top5_avg_seas_hr_per_pa"] = m("seas_hr_per_pa")
     out[f"{prefix}_top5_avg_hard_hit"] = m("seas_hard_hit")
     slg = m("seas_slg"); hrpa = m("seas_hr_per_pa")

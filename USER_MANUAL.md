@@ -153,7 +153,17 @@ Single page, three views.
   each group's log-odds contribution. "Effective weighting right now" bar +
   "Reset to model" button. Every card/edge/EV/recommendation recomputes live.
 - Header with colour-coded "updated N min ago" + "Refresh slate" button.
-- Metric row, filters (All / NRFI Edge / YRFI Edge / No Edge), sort, confirmed-only toggle.
+- Metric row, then (added 2026-09-24) a **"Notable batter-vs-pitcher matchups today"** callout —
+  the day's most significant individual BvP matchups (>=15 career PA, hitting well above/below
+  league norms against that specific starter), ranked by PA. Pure display (`matchup_highlights.py`).
+- Bet tracker bar (every page, above the game list): combined record, **➕ Log a Bet** (added
+  2026-09-24) — one global entry point with a matchup dropdown (already-started games marked 🔒
+  and grouped first; picking one warns odds may be stale rather than being blocked, since
+  Streamlit can't disable individual dropdown options), the model's lean, the full best-odds table,
+  then the usual side/book/odds/stake fields (stake now steps by **0.1 units**, was 0.5) — **📚
+  Record by sportsbook** — **📈 Daily return** (added 2026-09-24): a line chart of net $ per day,
+  toggle between all books or any single one, bold zero-line for breakeven — **🧾 Bet log**.
+- Filters (All / NRFI Edge / YRFI Edge / No Edge), sort, confirmed-only toggle.
 - One card per game: teams + records + probable pitchers + NRFI% (left, now
   with the local **start time** — 🕐 pre-game, 🔴 "in progress" once the
   game's status/time says it's started, added 2026-09-21); both model odds
@@ -300,6 +310,19 @@ only ever shows on the hosted deployment).
   `model_yrfi_prob_raw` (pre-blend) and `confidence_blend_weight` are kept in
   `todays_yrfi_predictions.parquet` alongside the blended `model_yrfi_prob`
   for anyone who wants to see the raw number.
+- **Lineup recent-form small samples (2026-09-24):** same class of issue as pitcher small samples,
+  but only a *display* warning, not a model fix — see the README's Model Architecture section for
+  why a training-time shrink was tried and reverted (the batter recent-form data is a frozen
+  snapshot in training, so it never sees real early-season variation). The dashboard flags it
+  live using today's real L7/L30 PA counts (`_thin_lineup_form_reason()` in app.py) when the
+  lineup recent-form signal is both dominant and thin.
+- **Non-atomic parquet writes (fixed 2026-09-24 for `todays_yrfi_predictions.parquet` only):**
+  a scheduled LaunchAgent run landed while the local Streamlit app had the page open and briefly
+  served a corrupted read (missing columns) — plain `to_parquet()` writes straight to the target
+  path with no atomicity guarantee. Fixed via `_atomic_to_parquet()` in `src/14_build_todays_yrfi.py`
+  (write to a `.tmp` file, `os.replace()` into place). Other frequently-rewritten files
+  (`probable_pitchers.parquet`, `yrfi_odds_{date}.parquet`) have the same theoretical exposure and
+  weren't touched — apply the same pattern if one of them is ever caught mid-write.
 
 ---
 

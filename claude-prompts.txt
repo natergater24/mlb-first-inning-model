@@ -1720,3 +1720,68 @@ still showed the old /us/nj/ domain (with matching odds_checked_at timestamp fro
 until its own "🔄 Refresh slate" button was clicked, which re-runs 04_fetch_odds.py live in that
 session. After clicking it, odds_checked_at updated and the link corrected to /us/nc/. Documented
 in claude-context.txt as a note for verifying any future odds/deeplink fix on Cloud.
+
+=== 2026-09-24 — BUILT: LINEUP RECENT-FORM FLAG + NOTABLE BVP CALLOUT + BUGFIX ===
+TASK: user asked (1) how to make the model lean on BvP/historical batter numbers early in a
+season instead of thin recent-form (L7/L30) data, then said "yes build it"; (2) incorporate that
+into the existing "why is this driving the odds" explanation surface; (3) add a landing-page
+callout of the day's most significant individual batter-vs-pitcher matchups.
+
+PART 1 -- ATTEMPTED MODEL FIX, REVERTED SAME DAY: mirrored the 2026-09-21 pitcher small-sample
+fix -- shrunk l7_obp/l30_obp toward league-average OBP (0.310, matching app.py's own constant) by
+each batter's own l7_pa/l30_pa, in yrfi_features.py's _top5_agg(). Retrained; go/no-go gate FAILED
+(test_2024 AUC 0.5435 vs baseline 0.5548, a 0.0113 regression against the 0.01 budget). Diagnosed
+why before just retuning constants: top5_batter_stats.parquet's L7/L30 data is a single frozen
+snapshot (rolling_asof = one date, checked directly) reused for every historical training row
+2015-2024 regardless of that game's real date -- the shrink never sees genuine early-season PA
+variation during training, so it just dampens a real signal without ever delivering the intended
+correction. Reverted cleanly (src/yrfi_features.py, data/models/, the tests written for it) --
+confirmed via `git diff` and a full pytest run back to the pre-attempt baseline.
+
+PART 2 -- SHIPPED INSTEAD (inference-only, no retrain): exposed away/home_top5_avg_l7_pa and
+_l30_pa as new DISPLAY-ONLY columns from _top5_agg() (NOT added to feature_columns() -- todays
+real PA counts are meaningful even though the frozen training snapshot's aren't) -- flows through
+src/14_build_todays_yrfi.py into todays_yrfi_predictions.parquet. app.py's new
+_thin_lineup_form_reason(r), same pattern as the existing pitcher _low_confidence_reason(): fires
+when lineup_recent_form is the single largest |contrib| group AND either side's L30 PA < 40 or L7
+PA < 15, naming the thin team and its real PA count. Wired into the same two spots as the pitcher
+flag (game_card's landing-page caption, section_prediction's detail-view warning box). Won't fire
+today (late September -- every team's current L7/L30 windows are naturally full) but will engage
+automatically come April.
+
+PART 3 -- NOTABLE BVP MATCHUPS CALLOUT: new matchup_highlights.py (plain module, NOT in app.py --
+app.py calls st.set_page_config() at import time and can't be imported by pytest, so pure logic
+that needs unit tests lives in its own file, same reasoning as bet_tracker.py/yrfi_features.py).
+compute_notable_bvp_matchups(pred, top5, bvp, n=3): for every game, every projected top-5 batter
+vs the actual opposing starter, keeps pairs with >=15 career PA (matches src/01's own
+bvp_reliable threshold) and OBP outside a league-normal band (<=0.220 or >=0.400, matching
+app.py's existing _WHY_EDGE_OBP_LOW/HIGH), ranked by PA. Rendered as a single st.info callout
+under the landing page's metric row (_render_notable_bvp_matchups()). 8 new tests, all passing.
+VERIFIED live against today's real slate: "Alec Burleson (STL) is 42.9% OBP vs Paul Skenes today
+-- 21 career PA", "Matt Olson (ATL) is 44.4% OBP vs Brady Singer today -- 18 career PA, 2 HR",
+"Hunter Goodman (COL) is 11.8% OBP vs Eduardo Rodriguez today -- 17 career PA" -- correctly
+ranked by PA descending, hot/cold emoji correct.
+
+BUGFIX FOUND DURING LIVE VERIFICATION (unrelated to the above, but only surfaced because the
+2026-09-23 LaunchAgent fix made the scheduled jobs actually fire): restarted Streamlit to verify
+the new features, hit `KeyError: 'game_pk'` on page_landing's very first line. Root cause: the
+10:30am LaunchAgent fired mid-session and rewrote todays_yrfi_predictions.parquet while
+load_predictions() (cached 120s via @st.cache_data) held a read from the exact moment of the
+write -- pandas' plain to_parquet() has no atomicity guarantee, so a concurrent reader can see a
+truncated file. This exact race was always possible but never manifested before because the
+LaunchAgents were silently failing (fixed just yesterday). FIXED: _atomic_to_parquet() in
+src/14_build_todays_yrfi.py -- write to a .tmp file, os.replace() into place (atomic on the same
+filesystem). Only applied to todays_yrfi_predictions.parquet (the one that actually broke);
+probable_pitchers.parquet and yrfi_odds_{date}.parquet have the same theoretical exposure,
+noted in USER_MANUAL.md but not fixed (no reproduced failure there yet).
+
+ALSO: units stepper (+/- buttons) on all bet-logging/editing forms changed from 0.5 to 0.1 per
+user request (app.py, 3 locations: _log_bet_form_compact, _edit_bet_form, section_track_bet).
+
+FILES CHANGED: src/yrfi_features.py (PA exposure only -- the shrink itself was reverted),
+src/14_build_todays_yrfi.py (PA columns + atomic write), matchup_highlights.py (new),
+app.py (_thin_lineup_form_reason, notable-matchups callout, 0.1 unit step x3), tests/
+test_yrfi_features.py, tests/test_matchup_highlights.py (new), README.md, USER_MANUAL.md,
+claude-context.txt, claude-prompts.txt.
+DEPLOY: pending -- built and verified locally, not yet committed/pushed at the time this entry
+was written.
