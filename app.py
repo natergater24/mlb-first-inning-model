@@ -22,6 +22,7 @@ import sys
 from datetime import datetime, date
 from pathlib import Path
 
+import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -1325,7 +1326,84 @@ def _is_hosted() -> bool:
     return shutil.which("caffeinate") is None
 
 
-def tracker_bar():
+def _global_log_bet_widget(pred: pd.DataFrame):
+    """Single 'Log a Bet' entry point at the top of the landing page: pick any
+    of today's matchups from a dropdown (no need to scroll to its card),
+    see the model's lean + every book's NRFI/YRFI line, then the same manual
+    fields the per-game form already uses. Streamlit can't disable individual
+    dropdown options, so an already-started game is marked with a 🔒 prefix
+    and, if picked anyway, gets an explicit warning rather than being
+    silently blocked."""
+    with st.expander("➕ Log a Bet", expanded=False):
+        if pred.empty:
+            st.caption("No games today.")
+            return
+        order = pred.sort_values("game_start_local") if "game_start_local" in pred.columns else pred
+        options: list[tuple[str, int]] = []
+        for _, r in order.iterrows():
+            started = bool(r.get("game_started"))
+            start = r.get("game_start_local") or "TBD"
+            label = f"{'🔒 ' if started else ''}{r['away_team']} @ {r['home_team']} · {start}" \
+                    f"{'  (already started)' if started else ''}"
+            options.append((label, int(r["game_pk"])))
+        picked = st.selectbox("Matchup", [o[0] for o in options], key="global_bet_matchup")
+        pk = dict(options)[picked]
+        r = pred[pred["game_pk"].astype(int) == pk].iloc[0]
+
+        if bool(r.get("game_started")):
+            st.warning("⚠️ This game has already started — odds and lineups shown may be stale.")
+
+        rec = str(r.get("recommended_bet", "NO EDGE"))
+        nrfi_pct = float(r["model_nrfi_prob"]) * 100
+        yrfi_pct = float(r["model_yrfi_prob"]) * 100
+        st.info(f"📊 Model lean: **{rec}**  ·  NRFI {nrfi_pct:.1f}%  /  YRFI {yrfi_pct:.1f}%")
+
+        odds_col, form_col = st.columns([1, 1.6])
+        with odds_col:
+            st.markdown(
+                "<div style='font-size:11px;color:#888;letter-spacing:.5px'>"
+                "BEST ODDS BY BOOK (AMERICAN)</div>" + _book_line_table(r),
+                unsafe_allow_html=True)
+            blank_reason = _odds_blank_reason(r)
+            if blank_reason:
+                st.caption(blank_reason)
+        with form_col:
+            _log_bet_form_compact(r, key_prefix="global")
+
+
+def _daily_return_chart(df: pd.DataFrame):
+    """Line chart of net $ return per day, toggle between all sportsbooks
+    combined and any single book. Only settled (won/lost) bets contribute --
+    an open bet has no realized result yet. The 0 breakeven line is drawn
+    bold so it's obvious at a glance whether a day was profitable."""
+    daily = bt.daily_net_by_book(df)
+    with st.expander("📈 Daily return"):
+        if daily.empty:
+            st.caption("No graded bets yet — this fills in once bets settle.")
+            return
+        books = [c for c in daily.columns if c != "All"]
+        choice = st.segmented_control(
+            "View", ["All"] + books, default="All", key="daily_chart_view")
+        if not choice:
+            choice = "All"
+
+        chart_df = daily[[choice]].reset_index().rename(
+            columns={"game_date": "Date", choice: "Net $"})
+        chart_df["Date"] = pd.to_datetime(chart_df["Date"])
+
+        line = alt.Chart(chart_df).mark_line(point=True, color="#1493ff").encode(
+            x=alt.X("Date:T", title=None),
+            y=alt.Y("Net $:Q", title="Net $ (that day)"),
+            tooltip=["Date:T", alt.Tooltip("Net $:Q", format="+.2f")],
+        )
+        zero_line = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(
+            color="#e6e6e6", strokeWidth=3, opacity=0.9
+        ).encode(y="y:Q")
+        st.altair_chart(zero_line + line, use_container_width=True)
+        st.caption(f"{choice} · settled bets only (open bets excluded until graded)")
+
+
+def tracker_bar(pred: pd.DataFrame):
     """Top-of-page bankroll tracker + bet log. Shown on every view."""
     if _is_hosted():
         st.warning(
@@ -1383,12 +1461,16 @@ def tracker_bar():
             except bt.BetLogAccessError as e:
                 st.warning(str(e))
 
+    _global_log_bet_widget(pred)
+
     by_book = bt.record_by_book(df)
     if not by_book.empty:
         with st.expander("📚 Record by sportsbook"):
             st.dataframe(
                 by_book.style.format({"Units": "{:+.2f}", "$": _money}),
                 hide_index=True, use_container_width=True)
+
+    _daily_return_chart(df)
 
     with st.expander(f"🧾 Bet log ({len(df)})"):
         render_bet_log_table(df, limit=10, ctx="log")
@@ -1602,7 +1684,7 @@ def main():
     pred = load_predictions()
     meta = load_model_meta()
 
-    bets_df = tracker_bar()
+    bets_df = tracker_bar(pred)
 
     if not pred.empty:
         weights = render_weight_controls(meta)

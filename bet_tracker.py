@@ -321,3 +321,21 @@ def record_by_book(df: pd.DataFrame) -> pd.DataFrame:
         })
     out = pd.DataFrame(rows)
     return out.sort_values("$", ascending=False).reset_index(drop=True)
+
+
+def daily_net_by_book(df: pd.DataFrame) -> pd.DataFrame:
+    """Net $ return per calendar day (game_date), one column per sportsbook
+    that has at least one settled bet plus an 'All' column summing across
+    books. Only won/lost bets count -- an open bet has no realized result
+    yet. A day with no settled bets for a given book is filled 0.0 (not
+    omitted), so a line chart shows a real flat day rather than a gap."""
+    graded = df[df["status"].isin(["won", "lost"])].copy()
+    if graded.empty:
+        return pd.DataFrame(columns=["All"])
+    graded["net"] = (pd.to_numeric(graded["result_units"], errors="coerce").fillna(0.0)
+                     * pd.to_numeric(graded["unit_size"], errors="coerce")
+                       .fillna(DEFAULT_UNIT_SIZE))
+    pivot = graded.pivot_table(index="game_date", columns="book", values="net",
+                               aggfunc="sum", fill_value=0.0)
+    pivot["All"] = pivot.sum(axis=1)
+    return pivot.sort_index()
