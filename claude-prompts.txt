@@ -1847,3 +1847,45 @@ real odds for the original 4 and clean blank "--" cells for the other 5. 30/30 t
 (no new pure logic introduced -- pure constant/schema expansion of an already-generic pipeline).
 FILES CHANGED: src/04_fetch_odds.py, bet_tracker.py, app.py, USER_MANUAL.md, claude-prompts.txt.
 DEPLOY: committed and pushed same session.
+
+=== 2026-09-24 (Part 4) — DYNAMIC BOOK TABLE, PER-GAME BVP CALLOUT, BASEBALL-STYLE OBP ===
+TASK: user asked for three fixes in one message: (1) remove books from the odds table that don't
+actually fetch real 1st-inning odds ("likely means we will go back to the original 4"); (2) move
+the notable batter-vs-pitcher callout from the top-of-page aggregate to each individual game card;
+(3) format OBP the way box scores do (".429") instead of as a percentage ("42.9%").
+
+PART 1 -- DYNAMIC BOOK FILTERING (not a hardcoded revert): added _books_with_data(pred) +
+_active_book_meta() to app.py, computed once per run in main() into st.session_state, filtering
+BOOK_META down to codes with at least one real yrfi_odds_*/nrfi_odds_* value anywhere in today's
+slate. Deliberately NOT a revert of Part 2/3's FI_BOOK_KEYS additions -- the fetch-side plumbing
+for all 9 SGO books stays intact, only the DISPLAY hides columns with no current data, so a book
+that starts (or stops) offering the market shows/hides automatically with no code change needed
+either direction. Found and fixed THREE separate call sites that needed the filtered set instead
+of raw BOOK_META.items(): _book_line_table() (game cards + the global Log-a-Bet widget),
+section_prediction()'s own inline table loop (detail view), AND a third one I initially missed --
+a standalone row of per-book quick-bet link buttons further down section_prediction() (`bcols =
+st.columns(len(BOOK_META))`) -- caught this one by actually clicking into the detail view during
+verification, not just checking the landing page cards.
+
+PART 2 -- PER-GAME BVP CALLOUT: matchup_highlights.py refactored -- extracted the per-game
+matching logic (_game_bvp_candidates) and added notable_bvp_for_game(game: pd.Series, top5, bvp,
+n=2) as the new public entry point; deleted the old slate-wide compute_notable_bvp_matchups()
+entirely since nothing calls it anymore (YAGNI -- don't keep dead code "just in case"). app.py:
+removed the _render_notable_bvp_matchups(pred) top-of-page call and function; added
+_render_game_bvp_matchups(r) called from inside game_card(), right after the why-this-edge/low-
+confidence captions. Rewrote all 8 tests against the new per-game function (9 now, added one for
+"both sides of the same game produce matchups together").
+
+PART 3 -- OBP FORMAT: swapped fmt_pct(obp*100, 1) ("42.9%") for fmt_stat(obp) (".429") in the new
+_render_game_bvp_matchups -- fmt_stat already existed and already does exactly this (strips the
+leading zero the way a box score does), just wasn't the function used here originally.
+
+VERIFIED live end-to-end after restarting Streamlit: top-of-page callout confirmed gone; book
+table back to 4 real columns (DK/FD/MGM/CZR) on both landing cards and detail view, including the
+quick-bet button row bug caught above; per-game "Notable matchup" caption rendering correctly on
+qualifying cards (Matt Olson .444 OBP vs Brady Singer, Alec Burleson .429 OBP vs Paul Skenes --
+matches the user's own example exactly); no caption at all on non-qualifying cards (correct, not
+a bug). 31/31 tests pass.
+FILES CHANGED: app.py, matchup_highlights.py, tests/test_matchup_highlights.py, USER_MANUAL.md,
+claude-prompts.txt.
+DEPLOY: committed and pushed same session.

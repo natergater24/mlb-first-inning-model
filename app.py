@@ -28,7 +28,7 @@ import pandas as pd
 import streamlit as st
 
 import bet_tracker as bt
-from matchup_highlights import compute_notable_bvp_matchups
+from matchup_highlights import notable_bvp_for_game
 
 ROOT = Path(__file__).resolve().parent
 PROC = ROOT / "data" / "processed"
@@ -452,8 +452,6 @@ def page_landing(pred: pd.DataFrame):
     m3.metric("Strong YRFI edges", strong_yrfi)
     m4.metric("Confirmed starters", f"{pred['_confirmed'].sum()}/{len(pred)}")
 
-    _render_notable_bvp_matchups(pred)
-
     st.divider()
 
     # filters
@@ -493,18 +491,52 @@ def page_landing(pred: pd.DataFrame):
         game_card(r)
 
 
-def _render_notable_bvp_matchups(pred: pd.DataFrame):
-    matchups = compute_notable_bvp_matchups(pred, load_top5_teams(), load_bvp())
+def _render_game_bvp_matchups(r) -> str | None:
+    """Notable batter-vs-pitcher matchups for THIS game only (moved from a
+    single top-of-page callout to per-game 2026-09-24, per feedback). Returns
+    an HTML/markdown-ready string, or None when nothing clears the bar for
+    this particular matchup."""
+    matchups = notable_bvp_for_game(r, load_top5_teams(), load_bvp())
     if not matchups:
-        return
+        return None
     lines = []
     for m in matchups:
         emoji = "🔥" if m["hot"] else "🧊"
+        # baseball convention: ".429 OBP", not "42.9%" -- fmt_stat already
+        # strips the leading zero the way box scores do.
         lines.append(
-            f"{emoji} **{m['batter_name']}** ({m['team']}) is **{fmt_pct(m['obp']*100, 1)} OBP** "
-            f"vs **{m['pitcher_name']}** today — {m['pa']} career PA"
+            f"{emoji} **{m['batter_name']}** ({m['team']}) is **{fmt_stat(m['obp'])} OBP** "
+            f"vs **{m['pitcher_name']}** — {m['pa']} career PA"
             + (f", {m['hr']} HR" if m['hr'] else ""))
-    st.info("**Notable batter-vs-pitcher matchups today**  \n" + "  \n".join(lines))
+    return "**Notable matchup" + ("s" if len(matchups) > 1 else "") + ":**  \n" + "  \n".join(lines)
+
+
+def _books_with_data(pred: pd.DataFrame) -> set[str]:
+    """Which BOOK_META codes actually have at least one real odds value
+    anywhere in today's slate -- computed fresh each load (not hardcoded)
+    so a book that starts offering the 0.5-run first-inning market shows up
+    automatically, and one that stops (or never has, like most of the SGO
+    bookmakers beyond DK/FD/MGM/CZR as of 2026-09-24) doesn't clutter the
+    table with an all-blank column."""
+    if pred.empty:
+        return set(BOOK_META.keys())
+    active = set()
+    for code in BOOK_META:
+        cols = [c for c in (f"yrfi_odds_{code}", f"nrfi_odds_{code}") if c in pred.columns]
+        if cols and pred[cols].notna().any().any():
+            active.add(code)
+    return active
+
+
+def _active_book_meta() -> dict:
+    """BOOK_META filtered to books with real data today (see
+    _books_with_data, computed once per run in main()). Falls back to the
+    full set if called before that's been set (shouldn't happen in normal
+    flow, but keeps this safe to call standalone)."""
+    active = st.session_state.get("_active_book_codes")
+    if active is None:
+        return BOOK_META
+    return {k: v for k, v in BOOK_META.items() if k in active}
 
 
 def logo_img(team_id, size=22) -> str:
@@ -556,17 +588,19 @@ def _bet_url(r, side: str, bk: str) -> tuple[str, bool]:
 
 
 def _book_line_table(r) -> str:
-    """Compact HTML table: NRFI / YRFI rows across DK / FD / MGM / CZR.
+    """Compact HTML table: NRFI / YRFI rows, one column per book that
+    actually has real first-inning odds data today (see _active_book_meta).
     Each listed line links to that book — ⚡ = instant add-to-betslip deeplink,
     ↗ = book's MLB page (no deeplink offered for that book)."""
+    active_meta = _active_book_meta()
     head = ""
-    for bk, (label, color) in BOOK_META.items():
+    for bk, (label, color) in active_meta.items():
         head += (f"<th style='padding:2px 8px;font-size:11px'>"
                  f"<span style='color:{color};font-weight:700'>{bk}</span></th>")
     body = ""
     for side, label in (("nrfi", "NRFI"), ("yrfi", "YRFI")):
         cells = ""
-        for bk, (blabel, color) in BOOK_META.items():
+        for bk, (blabel, color) in active_meta.items():
             o = r.get(f"{side}_odds_{bk}")
             txt = fmt_odds(o)
             if txt == "—":
@@ -710,6 +744,9 @@ def game_card(r):
         low_conf = _low_confidence_reason(r) or _thin_lineup_form_reason(r)
         if low_conf:
             st.caption(low_conf)
+        bvp_note = _render_game_bvp_matchups(r)
+        if bvp_note:
+            st.caption(bvp_note)
 
         # ── inline bet logger (compact, collapsed by default) ─────────────
         with st.expander("➕ Log a Bet", expanded=False, key=f"bet_exp_{pk}"):
@@ -1027,7 +1064,7 @@ def section_prediction(r):
 
     rows = []
     best_n_edge = best_y_edge = -99
-    for bk, (label, _) in BOOK_META.items():
+    for bk, (label, _) in _active_book_meta().items():
         no_ = r.get(f"nrfi_odds_{bk}"); yo_ = r.get(f"yrfi_odds_{bk}")
         ni = r.get(f"nrfi_implied_{bk}"); yi = r.get(f"yrfi_implied_{bk}")
         n_edge = (nrfi - ni) * 100 if pd.notna(ni) else np.nan
@@ -1065,8 +1102,9 @@ def section_prediction(r):
     st.caption(f"Add **{bet_side}** to betslip  ·  ⚡ = adds the exact selection instantly "
                f"(Caesars, BetMGM)  ·  ↗ = opens the book's MLB page "
                f"(DraftKings & FanDuel — no working instant link for this market)")
-    bcols = st.columns(len(BOOK_META))
-    for i, bk in enumerate(BOOK_META):
+    active_meta = _active_book_meta()
+    bcols = st.columns(len(active_meta))
+    for i, bk in enumerate(active_meta):
         url, instant = _bet_url(r, bet_side.lower(), bk)
         odds = fmt_odds(r.get(f"{bet_side.lower()}_odds_{bk}"))
         bcols[i].link_button(
@@ -1754,6 +1792,7 @@ def section_track_bet(r):
 def main():
     pred = load_predictions()
     meta = load_model_meta()
+    st.session_state["_active_book_codes"] = _books_with_data(pred)
 
     bets_df = tracker_bar(pred)
 

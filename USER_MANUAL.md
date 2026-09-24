@@ -129,16 +129,18 @@ Neither restarts Streamlit; use `launch.sh` or Option B for that.
 - **Fallback: The Odds API** (`ODDS_API_KEY`) — 500 requests/month free; only
   FanDuel + BetMGM expose the first-inning total here. Don't run odds more than
   once/day; don't `--force-refresh` repeatedly when quota is low.
-- **All 9 SGO bookmakers wired in (added 2026-09-24):** `FI_BOOK_KEYS` in
-  `src/04_fetch_odds.py` now covers SportsGameOdds' complete MLB bookmaker
-  set — confirmed live via `/v2/events/` (`oddsAvailable=true`), not assumed:
+- **All 9 SGO bookmakers wired in, table shows only the ones with real data
+  (added 2026-09-24, refined same day):** `FI_BOOK_KEYS` in
+  `src/04_fetch_odds.py` covers SportsGameOdds' complete MLB bookmaker set —
+  confirmed live via `/v2/events/` (`oddsAvailable=true`), not assumed:
   DraftKings, FanDuel, BetMGM, Caesars, ESPN Bet, Bovada, PointsBet, Unibet,
   William Hill. That's all of them; there's nothing left on SGO to add. As of
   this writing only DK/FD/MGM/CZR actually offer the 0.5-run first-inning
-  market — the other 5 are real SGO bookmakers generally, just not (yet) for
-  this specific prop, so their columns render blank ("—") like any book with
-  no data for a game. The plumbing is real and will populate automatically
-  the day any of them lists this market — no code change needed then.
+  market, so **the book-lines table only shows columns for books with real
+  data today** (`_active_book_meta()` in app.py, computed fresh from
+  `pred` each load — not hardcoded) rather than displaying 5 permanently-
+  blank columns. This self-heals: no code change needed the day any of the
+  other 5 starts listing the market, and none needed if one stops.
   Hard Rock Bet was investigated and deliberately left out: absent from SGO
   entirely; present on The Odds API only under a separate, state-scoped
   `us2` region that would double that fallback's already-scarce quota cost,
@@ -167,9 +169,12 @@ Single page, three views.
   each group's log-odds contribution. "Effective weighting right now" bar +
   "Reset to model" button. Every card/edge/EV/recommendation recomputes live.
 - Header with colour-coded "updated N min ago" + "Refresh slate" button.
-- Metric row, then (added 2026-09-24) a **"Notable batter-vs-pitcher matchups today"** callout —
-  the day's most significant individual BvP matchups (>=15 career PA, hitting well above/below
-  league norms against that specific starter), ranked by PA. Pure display (`matchup_highlights.py`).
+- Metric row.
+- Each game card (added 2026-09-24, moved from a single top-of-page callout to per-game same
+  day): a **"Notable matchup"** caption when that specific game has one — a projected top-5
+  hitter with real (>=15 career PA) history against today's actual opposing starter, hitting well
+  above/below league norms against him specifically. OBP shown baseball-style (`.429 OBP`, not
+  `42.9%`). Pure display (`matchup_highlights.py`'s `notable_bvp_for_game()`).
 - Bet tracker bar (every page, above the game list): combined record, **➕ Log a Bet** (added
   2026-09-24) — one global entry point with a matchup dropdown (already-started games marked 🔒
   and grouped first; picking one warns odds may be stale rather than being blocked, since
