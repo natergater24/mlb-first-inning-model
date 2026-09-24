@@ -1783,5 +1783,42 @@ src/14_build_todays_yrfi.py (PA columns + atomic write), matchup_highlights.py (
 app.py (_thin_lineup_form_reason, notable-matchups callout, 0.1 unit step x3), tests/
 test_yrfi_features.py, tests/test_matchup_highlights.py (new), README.md, USER_MANUAL.md,
 claude-context.txt, claude-prompts.txt.
-DEPLOY: pending -- built and verified locally, not yet committed/pushed at the time this entry
-was written.
+DEPLOY: committed (eb2fe70, fc476c1) and pushed to origin/main same session.
+
+=== 2026-09-24 (Part 2) — HARD ROCK BET INVESTIGATED (declined) + ESPN BET/BOVADA ADDED ===
+TASK: user asked why Hard Rock Bet isn't in the book-odds list, then asked to add ESPN Bet and
+Bovada as new columns instead.
+
+HARD ROCK BET -- investigated live, not assumed: SGO's actual bookmaker set for a real MLB event
+(checked directly via /v2/events/ with oddsAvailable=true) is exactly 9: betmgm, bovada, caesars,
+draftkings, espnbet, fanduel, pointsbet, unibet, williamhill -- no Hard Rock. The Odds API DOES
+list "hardrockbet" (per their public bookmaker-apis docs), but only under a separate "us2" region,
+state-scoped (separate keys for IN/AZ/FL/OH, no nationwide key), and combining "us,us2" in one
+call DOUBLES that fallback's quota cost per their own pricing (cost = markets x regions) -- real
+money given the free tier is 500/month and was sitting at 0 remaining this same session. Also
+unconfirmed whether Hard Rock Bet even operates in NC. User said leave it out.
+
+ESPN BET + BOVADA -- both already present in SGO's general bookmaker set (confirmed in the same
+live check above), so wired into the existing generic pipeline rather than building anything new:
+FI_BOOK_KEYS (src/04_fetch_odds.py) extended {"espnbet":"ESPN","bovada":"BOV"}; BOOKMAKERS string
+gained espnbet (bovada was already there) for The Odds API's fallback path. Confirmed both
+src/14_build_todays_yrfi.py (odds join) and app.py's _book_line_table()/BOOK_META are fully
+generic over whatever's in FI_BOOK_KEYS -- zero changes needed there. Added BOOK_META (label +
+color) and BOOK_BET_URL (lobby fallback) entries in app.py, and BOOKS/BOOK_CODE_TO_NAME entries
+in bet_tracker.py (the latter needed so section_track_bet's odds pre-fill works for the two new
+books, not just display).
+
+REAL FINDING ON LIVE VERIFICATION: refetched odds after the change -- SGO's own capture log read
+"96 book lines across 12 games (CZR, DK, FD, MGM)", i.e. NOT including ESPN/BOV despite both being
+valid SGO bookmakers generally. Checked directly: 0/12 games have any yrfi_odds_ESPN or
+yrfi_odds_BOV value. Root cause: being a bookmaker SGO tracks for MLB generally doesn't mean that
+book offers THIS specific 0.5-run first-inning prop -- same pattern already documented for DK/
+Caesars on The Odds API's feed. Confirmed this isn't a bug in the new code (the pipeline is fully
+generic and correctly produces the columns, they're just empty) by checking the raw parquet
+directly. Verified live in-browser: the book-lines table now shows 6 columns (DK/FD/MGM/CZR/ESPN/
+BOV) with distinct colors, ESPN/BOV rendering as blank "--" cells exactly like any other book with
+no current data for a game -- no crash, no special-casing needed, the existing fmt_odds "--"
+fallback already handles it. The plumbing is real and will populate automatically whenever either
+book lists this market on SGO.
+FILES CHANGED: src/04_fetch_odds.py, bet_tracker.py, app.py, USER_MANUAL.md, claude-prompts.txt.
+DEPLOY: committed and pushed same session.

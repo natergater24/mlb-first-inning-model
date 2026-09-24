@@ -51,10 +51,12 @@ COLUMNS = [
 
 DEFAULT_UNIT_SIZE = 25.0  # dollars per unit
 
-BOOKS = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "PointsBet", "BetOnline", "Other"]
+BOOKS = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "ESPN Bet", "Bovada",
+        "PointsBet", "BetOnline", "Other"]
 # app.py BOOK_META short code -> full name used here
 BOOK_CODE_TO_NAME = {"DK": "DraftKings", "FD": "FanDuel",
-                     "MGM": "BetMGM", "CZR": "Caesars"}
+                     "MGM": "BetMGM", "CZR": "Caesars",
+                     "ESPN": "ESPN Bet", "BOV": "Bovada"}
 
 SCHED_URL = "https://statsapi.mlb.com/api/v1/schedule"
 LINESCORE_URL = "https://statsapi.mlb.com/api/v1/game/{pk}/linescore"

@@ -100,12 +100,13 @@ MARKETS_FIRST_INNING = [
 # NOTE (checked 2026-09-09): neither SportsGameOdds nor The Odds API carries
 # bet365 or Fanatics Sportsbook for MLB — they cannot be added without a
 # dedicated third data source.
-FI_BOOK_KEYS = {"draftkings": "DK", "fanduel": "FD", "betmgm": "MGM", "caesars": "CZR"}
+FI_BOOK_KEYS = {"draftkings": "DK", "fanduel": "FD", "betmgm": "MGM", "caesars": "CZR",
+                "espnbet": "ESPN", "bovada": "BOV"}
 SGO_FI_OVER_KEY = "points-all-1i-ou-over"    # YRFI
 SGO_FI_UNDER_KEY = "points-all-1i-ou-under"  # NRFI
 
 # Sportsbooks to include (North American + major)
-BOOKMAKERS = "draftkings,fanduel,betmgm,caesars,pointsbet,williamhill_us,betonlineag,bovada"
+BOOKMAKERS = "draftkings,fanduel,betmgm,caesars,pointsbet,williamhill_us,betonlineag,bovada,espnbet"
 
 # ── SportsGameOdds (SGO) constants ────────────────────────────────────────────
 SGO_BASE = "https://api.sportsgameodds.com/v2"

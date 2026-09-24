@@ -71,12 +71,16 @@ BOOK_META = {  # short -> (label, color)
     "FD": ("FanDuel", "#1493ff"),
     "MGM": ("BetMGM", "#c8a24a"),
     "CZR": ("Caesars", "#1b3c5d"),
+    "ESPN": ("ESPN Bet", "#d6001c"),
+    "BOV": ("Bovada", "#6b3fa0"),
 }
 BOOK_BET_URL = {
     "DK": "https://sportsbook.draftkings.com/leagues/baseball/mlb",
     "FD": "https://sportsbook.fanduel.com/baseball",
     "MGM": "https://sports.betmgm.com/en/sports/baseball-23",
     "CZR": "https://sportsbook.caesars.com/us/nj/sport/baseball",
+    "ESPN": "https://espnbet.com/sport/baseball/organization/mlb",
+    "BOV": "https://www.bovada.lv/sports/baseball/mlb",
 }
 
 
